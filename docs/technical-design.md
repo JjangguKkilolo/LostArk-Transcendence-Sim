@@ -50,11 +50,10 @@ type GameState = {
   stageId: string;
   board: BoardState;
   spiritQueue: SpiritQueueState;
-  actionTurn: number;
+  actionCount: number;
   summonCount: number;
-  grace: GraceState;
-  rng: RandomState;
-  status: "PLAYING" | "CLEARED" | "FAILED";
+  graceLevel: number;
+  status: "PLAYING" | "CLEARED";
 };
 
 type BattleState = {
@@ -91,16 +90,21 @@ type Tile = {
 type GameAction =
   | {
       type: "USE_SPIRIT";
-      spiritId: string;
-      targetTileId: string;
+      activeIndex: 0 | 1;
+      target: Position;
     }
   | {
       type: "REROLL_SPIRIT";
-      slot: 0 | 1;
+      activeIndex: 0 | 1;
     };
 
 type GameEvent =
-  | { type: "SPIRIT_CAST"; spiritId: string; targetTileId: string }
+  | {
+      type: "SPIRIT_CAST";
+      activeIndex: 0 | 1;
+      spiritId: string;
+      target: Position;
+    }
   | { type: "TILE_HIT"; tileId: string; probability: number }
   | { type: "TILE_DESTROYED"; tileId: string }
   | { type: "TILES_SPAWNED"; tileIds: string[] }
@@ -108,7 +112,7 @@ type GameEvent =
   | { type: "SPIRIT_CLONED"; spiritId: string }
   | { type: "SPIRIT_ENHANCED"; spiritId: string; level: number }
   | { type: "TILES_RELOCATED"; movements: TileMovement[] }
-  | { type: "TURN_COMPLETED"; actionTurn: number; summonCount: number }
+  | { type: "TURN_COMPLETED"; actionCount: number; summonCount: number }
   | { type: "GAME_CLEARED"; grade: ClearGrade };
 ```
 
@@ -119,19 +123,21 @@ type TurnResult = {
 };
 ```
 
-## 특수 효과 해결 큐
+## 특수 효과 해결 경계
 
-한 공격으로 여러 특수 타일이 파괴될 수 있으므로 효과를 일괄 변경하지 않는다.
+특수 효과를 보드 공격과 카드 갱신 사이의 독립된 이벤트 경계로 처리한다.
 
 ```ts
 type PendingEffect = {
   sourceTileId: string;
   effect: SpecialEffect;
-  priority: number;
 };
 ```
 
-효과를 원작 순서대로 하나씩 처리하면서 각 중간 결과를 이벤트로 남긴다.
+정상 보드에는 활성 특수 석판이 최대 하나다. 해결 경계는 애니메이션 이벤트 순서를
+유지하기 위한 구조이며, 여러 특수 효과가 동시에 들어오면 우선순위를 임의로 정하지
+않고 불변조건 오류를 반환한다. 전체 처리 순서는
+[턴 상태 전이 통합 명세](./rules/turn-state-machine.md)를 단일 기준으로 사용한다.
 
 ## 난수 스트림
 
@@ -256,8 +262,7 @@ type SavedBattle = {
 - 원본 상태가 변경되지 않는다.
 - 정령별 공격 범위와 가장자리 처리가 정확하다.
 - 왜곡 석판의 생성 및 예외 처리가 정확하다.
-- 복수 특수 효과의 발동 순서가 정확하다.
+- 활성 특수 석판이 둘 이상인 비정상 상태를 거부한다.
 - 축복 시 행동 턴은 증가하고 소환 횟수는 증가하지 않는다.
 - 재배치 전후 타일 ID가 유지된다.
 - 성공과 등급 판정이 단계 데이터와 일치한다.
-

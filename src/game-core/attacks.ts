@@ -1,5 +1,6 @@
 import {
   comparePositions,
+  createPlayablePositions,
   isPositionInShape,
   positionKey,
 } from "./board.ts";
@@ -9,6 +10,7 @@ import type {
   BoardDefinition,
   BoardState,
   Position,
+  Tile,
   TileKind,
 } from "./types.ts";
 
@@ -28,7 +30,7 @@ export type LinearPatternSpiritId =
 
 export type PatternSpiritId = FixedPatternSpiritId | LinearPatternSpiritId;
 export type ElzowinAttackSpiritId = "PURIFY" | "WORLD_TREE_RESONANCE";
-export type SingleTargetSpiritId = "OUTBURST";
+export type SingleTargetSpiritId = "LIGHTNING" | "OUTBURST";
 export type PlannedAttackSpiritId =
   | PatternSpiritId
   | ElzowinAttackSpiritId
@@ -65,6 +67,19 @@ export type AttackRollResult = Readonly<{
   plan: AttackPlan;
   rolls: readonly AttackRoll[];
 }>;
+
+export type LightningFollowUp =
+  | Readonly<{
+      kind: "RESTORE_ONE";
+      roll: -1;
+      position?: Position;
+    }>
+  | Readonly<{
+      kind: "DESTROY_EXTRA";
+      roll: number;
+      requestedCount: number;
+      tiles: readonly Tile[];
+    }>;
 
 type RelativeCell = Readonly<{
   row: number;
@@ -200,6 +215,85 @@ export function createOutburstAttackPlan(
     target,
     [relativeCell(0, 0)],
   );
+}
+
+export function createLightningAttackPlan(
+  definition: BoardDefinition,
+  board: BoardState,
+  spirit: SpiritCard,
+  target: Position,
+): AttackPlan {
+  if (spirit.category !== "NORMAL" || spirit.spiritId !== "LIGHTNING") {
+    throw new Error(`Spirit ${spirit.spiritId} is not Lightning.`);
+  }
+
+  return createPatternAttackPlan(
+    definition,
+    board,
+    spirit,
+    "LIGHTNING",
+    target,
+    [relativeCell(0, 0)],
+  );
+}
+
+/**
+ * Rolls Lightning after its primary hit and distorted restoration have already
+ * been applied to the supplied board.
+ */
+export function rollLightningFollowUp(
+  definition: BoardDefinition,
+  board: BoardState,
+  spirit: SpiritCard,
+  random: RandomSource,
+): LightningFollowUp {
+  validateBoardMatchesDefinition(definition, board);
+  if (spirit.category !== "NORMAL" || spirit.spiritId !== "LIGHTNING") {
+    throw new Error(`Spirit ${spirit.spiritId} is not Lightning.`);
+  }
+
+  const roll = random.nextInt(spirit.level * 2 + 2) - 1;
+  if (roll === -1) {
+    const occupied = new Set(
+      board.tiles.map(({ position }) => positionKey(position)),
+    );
+    const emptyPositions = createPlayablePositions(definition)
+      .filter((position) => !occupied.has(positionKey(position)))
+      .sort(comparePositions);
+    const position =
+      emptyPositions.length === 0
+        ? undefined
+        : emptyPositions[random.nextInt(emptyPositions.length)];
+
+    return position === undefined
+      ? { kind: "RESTORE_ONE", roll }
+      : { kind: "RESTORE_ONE", roll, position: { ...position } };
+  }
+
+  const candidates = board.tiles
+    .filter(({ kind }) => kind === "ANCIENT")
+    .sort((left, right) => comparePositions(left.position, right.position));
+  const selected: Tile[] = [];
+  const count = Math.min(roll, candidates.length);
+
+  for (let index = 0; index < count; index += 1) {
+    const selectedIndex = index + random.nextInt(candidates.length - index);
+    const current = candidates[index];
+    const chosen = candidates[selectedIndex];
+    if (current === undefined || chosen === undefined) {
+      throw new Error("Lightning candidate selection escaped array bounds.");
+    }
+    candidates[index] = chosen;
+    candidates[selectedIndex] = current;
+    selected.push(chosen);
+  }
+
+  return {
+    kind: "DESTROY_EXTRA",
+    roll,
+    requestedCount: roll,
+    tiles: selected,
+  };
 }
 
 function createPatternAttackPlan(
@@ -405,6 +499,7 @@ function destroyChance(
   }
   if (
     spirit.spiritId === "OUTBURST" ||
+    spirit.spiritId === "LIGHTNING" ||
     spirit.spiritId === "WORLD_TREE_RESONANCE"
   ) {
     return PROBABILITY_SCALE;

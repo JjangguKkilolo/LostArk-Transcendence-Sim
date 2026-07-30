@@ -4,8 +4,10 @@ import test from "node:test";
 import {
   createFixedAttackPlan,
   createElzowinAttackPlan,
+  createLightningAttackPlan,
   createLinearAttackPlan,
   createOutburstAttackPlan,
+  rollLightningFollowUp,
   rollAttackPlan,
 } from "./attacks.ts";
 import { createBoardSetup, positionKey } from "./board.ts";
@@ -310,6 +312,88 @@ test("outburst destroys one normal target and cannot target distorted", () => {
   );
 });
 
+test("lightning destroys one normal target and cannot target distorted", () => {
+  const definition = getBoardDefinition("WEAPON", 1);
+  const board = createBoardSetup(definition, 0, new SeededRandom(1)).board;
+  const spirit = lightningCard(2);
+  const plan = createLightningAttackPlan(
+    definition,
+    board,
+    spirit,
+    { row: 1, column: 3 },
+  );
+
+  assert.equal(plan.candidates.length, 1);
+  assert.equal(plan.candidates[0]?.destroyChance, 10_000);
+  assert.throws(
+    () =>
+      createLightningAttackPlan(
+        definition,
+        board,
+        spirit,
+        { row: 1, column: 2 },
+      ),
+    /cannot target a distorted tile/,
+  );
+});
+
+test("lightning rolls its level-scaled exclusive outcome", () => {
+  const definition = getBoardDefinition("SHOULDERS", 1);
+  const fullBoard = createBoardSetup(definition, 0, new SeededRandom(1)).board;
+  const board = {
+    ...fullBoard,
+    tiles: fullBoard.tiles.filter(
+      ({ position }) => positionKey(position) !== "2,2",
+    ),
+  };
+
+  const restored = rollLightningFollowUp(
+    definition,
+    board,
+    lightningCard(1),
+    new SequenceRandom([0, 0]),
+  );
+  assert.deepEqual(restored, {
+    kind: "RESTORE_ONE",
+    roll: -1,
+    position: { row: 2, column: 2 },
+  });
+
+  const levelThree = rollLightningFollowUp(
+    definition,
+    board,
+    lightningCard(3),
+    new SequenceRandom([7, 0, 0, 0, 0, 0, 0]),
+  );
+  assert.equal(levelThree.kind, "DESTROY_EXTRA");
+  if (levelThree.kind === "DESTROY_EXTRA") {
+    assert.equal(levelThree.requestedCount, 6);
+    assert.equal(levelThree.tiles.length, 6);
+    assert.equal(new Set(levelThree.tiles.map(({ id }) => id)).size, 6);
+    assert.ok(levelThree.tiles.every(({ kind }) => kind === "ANCIENT"));
+  }
+});
+
+test("lightning extra destruction is capped by remaining normal tiles", () => {
+  const definition = getBoardDefinition("SHOULDERS", 1);
+  const fullBoard = createBoardSetup(definition, 0, new SeededRandom(1)).board;
+  const remaining = fullBoard.tiles.find(({ kind }) => kind === "ANCIENT");
+  assert.ok(remaining);
+  const board = { ...fullBoard, tiles: [remaining] };
+
+  const result = rollLightningFollowUp(
+    definition,
+    board,
+    lightningCard(3),
+    new SequenceRandom([7, 0]),
+  );
+  assert.equal(result.kind, "DESTROY_EXTRA");
+  if (result.kind === "DESTROY_EXTRA") {
+    assert.equal(result.requestedCount, 6);
+    assert.deepEqual(result.tiles, [remaining]);
+  }
+});
+
 test("non-Elzowin pattern spirits cannot center an attack on distorted", () => {
   const definition = getBoardDefinition("WEAPON", 1);
   const board = createBoardSetup(definition, 0, new SeededRandom(1)).board;
@@ -411,6 +495,15 @@ function normalCard(
   return {
     instanceId: `card:${spiritId}:${level}`,
     spiritId,
+    category: "NORMAL",
+    level,
+  };
+}
+
+function lightningCard(level: SpiritLevel): SpiritCard {
+  return {
+    instanceId: `card:LIGHTNING:${level}`,
+    spiritId: "LIGHTNING",
     category: "NORMAL",
     level,
   };

@@ -241,7 +241,7 @@ export function applyAction(
     const otherIndex: ActiveSpiritIndex =
       action.activeIndex === 0 ? 1 : 0;
     const otherSpirit = state.spiritQueue.active[otherIndex];
-    const plan = createAttackPlan(
+    const plan = createSpiritAttackPlan(
       definition,
       state.board,
       usedSpirit,
@@ -416,7 +416,7 @@ function validateAction(
   return undefined;
 }
 
-function createAttackPlan(
+export function createSpiritAttackPlan(
   definition: BoardDefinition,
   board: BoardState,
   spirit: SpiritCard,

@@ -15,7 +15,11 @@ import {
   type BattleRound,
   type BattleState,
 } from "../src/battle/battle.ts";
-import { createAnimationTimeline } from "../src/animation/timeline.ts";
+import {
+  createAnimationCue,
+  createAnimationTimeline,
+  type AnimationCue,
+} from "../src/animation/timeline.ts";
 import {
   createGame,
   getLegalActions,
@@ -125,8 +129,8 @@ export default function Home() {
   );
   const [selectedIndex, setSelectedIndex] =
     useState<ActiveSpiritIndex>(0);
-  const [playerPhase, setPlayerPhase] = useState<string>();
-  const [aiPhase, setAiPhase] = useState<string>();
+  const [playerAnimation, setPlayerAnimation] = useState<AnimationCue>();
+  const [aiAnimation, setAiAnimation] = useState<AnimationCue>();
   const [message, setMessage] = useState(
     "정령을 고른 뒤 파괴할 석판을 선택하세요.",
   );
@@ -171,8 +175,8 @@ export default function Home() {
   useEffect(() => {
     if (battle.phase !== "ROUND_SUMMARY") return;
     const timer = window.setTimeout(() => {
-      setPlayerPhase(undefined);
-      setAiPhase(undefined);
+      setPlayerAnimation(undefined);
+      setAiAnimation(undefined);
     }, 1_800);
     return () => window.clearTimeout(timer);
   }, [battle.phase]);
@@ -353,11 +357,11 @@ export default function Home() {
     }
     playTimeline(
       resolved.state.latestRound?.playerEvents ?? [],
-      setPlayerPhase,
+      setPlayerAnimation,
     );
     playTimeline(
       resolved.state.latestRound?.aiEvents ?? [],
-      setAiPhase,
+      setAiAnimation,
     );
     const comparison = resolved.state.latestRound?.comparison;
     setMessage(
@@ -392,8 +396,8 @@ export default function Home() {
     aiRecommendationRandom.current = new SeededRandom(73_331);
     setBattle(createInitialBattle(config));
     setSelectedIndex(0);
-    setPlayerPhase(undefined);
-    setAiPhase(undefined);
+    setPlayerAnimation(undefined);
+    setAiAnimation(undefined);
     setAiAnalysis([]);
     setTurnAnalyses([]);
     setResultOpen(false);
@@ -415,8 +419,8 @@ export default function Home() {
     setConfig(draftConfig);
     setBattle(nextBattle);
     setSelectedIndex(0);
-    setPlayerPhase(undefined);
-    setAiPhase(undefined);
+    setPlayerAnimation(undefined);
+    setAiAnimation(undefined);
     setAiAnalysis([]);
     setTurnAnalyses([]);
     setSettingsOpen(false);
@@ -478,7 +482,7 @@ export default function Home() {
           subtitle="당신의 선택"
           state={battle.player}
           definition={definition}
-          animationPhase={playerPhase}
+          animation={playerAnimation}
           selectedIndex={selectedIndex}
           onSelectCard={setSelectedIndex}
           legalTargetKeys={legalTargetKeys}
@@ -507,7 +511,7 @@ export default function Home() {
           subtitle="확률로 읽는 선택"
           state={battle.ai}
           definition={definition}
-          animationPhase={aiPhase}
+          animation={aiAnimation}
           selectedIndex={0}
           onSelectCard={() => undefined}
           legalTargetKeys={new Set()}
@@ -605,7 +609,7 @@ type BoardPanelProps = {
   subtitle: string;
   state: GameState;
   definition: BoardDefinition;
-  animationPhase: string | undefined;
+  animation: AnimationCue | undefined;
   selectedIndex: ActiveSpiritIndex;
   onSelectCard: (index: ActiveSpiritIndex) => void;
   legalTargetKeys: ReadonlySet<string>;
@@ -623,6 +627,15 @@ function BoardPanel(props: BoardPanelProps) {
     props.recommendedAction?.type === "USE_SPIRIT"
       ? positionKey(props.recommendedAction.target)
       : undefined;
+  const affectedKeys = new Set(
+    props.animation?.affectedPositions.map(positionKey) ?? [],
+  );
+  const failedKeys = new Set(
+    props.animation?.failedPositions.map(positionKey) ?? [],
+  );
+  const animationClass = props.animation
+    ? `animation-${props.animation.phase.toLowerCase()} effect-${props.animation.style.toLowerCase()}`
+    : "animation-idle effect-neutral";
 
   return (
     <article className={`board-panel board-${props.side.toLowerCase()}`}>
@@ -638,9 +651,14 @@ function BoardPanel(props: BoardPanelProps) {
       </div>
 
       <div
-        className={`board animation-${props.animationPhase ?? "idle"}`}
+        className={`board ${animationClass}`}
         style={{ "--board-size": props.definition.size } as CSSProperties}
       >
+        {props.animation !== undefined &&
+          (props.animation.phase === "CAST" ||
+            props.animation.phase === "SPECIAL") && (
+            <span className="spirit-flare" aria-hidden="true" />
+          )}
         {Array.from({ length: props.definition.size ** 2 }, (_, index) => {
           const position = {
             row: Math.floor(index / props.definition.size),
@@ -665,6 +683,8 @@ function BoardPanel(props: BoardPanelProps) {
                 tile?.specialEffect ? "tile-special" : "",
                 legal && props.interactive ? "tile-legal" : "",
                 recommendedKey === key ? "tile-recommended" : "",
+                affectedKeys.has(key) ? "tile-effect" : "",
+                failedKeys.has(key) ? "tile-effect-failed" : "",
               ]
                 .filter(Boolean)
                 .join(" ")}
@@ -1211,15 +1231,22 @@ function createInitialBattle(config: GameConfig): BattleState {
 
 function playTimeline(
   events: readonly GameEvent[],
-  setPhase: (phase: string | undefined) => void,
+  setAnimation: (cue: AnimationCue | undefined) => void,
 ) {
   const timeline = createAnimationTimeline(events);
+  const spiritId = events.find(
+    (
+      event,
+    ): event is Extract<GameEvent, { type: "SPIRIT_CAST" }> =>
+      event.type === "SPIRIT_CAST",
+  )?.spirit.spiritId;
   let elapsed = 0;
   for (const frame of timeline) {
-    window.setTimeout(() => setPhase(frame.phase.toLowerCase()), elapsed);
-    elapsed += Math.min(frame.durationMs, 240);
+    const cue = createAnimationCue(frame, spiritId);
+    window.setTimeout(() => setAnimation(cue), elapsed);
+    elapsed += frame.durationMs;
   }
-  window.setTimeout(() => setPhase(undefined), elapsed);
+  window.setTimeout(() => setAnimation(undefined), elapsed);
 }
 
 function ancientCount(state: GameState) {

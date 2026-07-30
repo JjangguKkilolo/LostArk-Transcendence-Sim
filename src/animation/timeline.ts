@@ -1,4 +1,7 @@
 import type { GameEvent } from "../game-core/game.ts";
+import type { SpiritId } from "../game-core/spirits.ts";
+import type { Position } from "../game-core/types.ts";
+import { positionKey } from "../game-core/board.ts";
 
 export type AnimationPhase =
   | "CAST"
@@ -13,6 +16,24 @@ export type AnimationFrame = Readonly<{
   phase: AnimationPhase;
   durationMs: number;
   events: readonly GameEvent[];
+}>;
+
+export type AnimationStyle =
+  | "FIRE"
+  | "LIGHTNING"
+  | "WIND"
+  | "EARTH"
+  | "WATER"
+  | "ELZOWIN"
+  | "MYSTERY"
+  | "NEUTRAL";
+
+export type AnimationCue = Readonly<{
+  phase: AnimationPhase;
+  style: AnimationStyle;
+  spiritId?: SpiritId;
+  affectedPositions: readonly Position[];
+  failedPositions: readonly Position[];
 }>;
 
 export function createAnimationTimeline(
@@ -39,6 +60,70 @@ export function createAnimationTimeline(
   }
 
   return frames;
+}
+
+export function createAnimationCue(
+  frame: AnimationFrame,
+  spiritId: SpiritId | undefined,
+): AnimationCue {
+  const affected: Position[] = [];
+  const failed: Position[] = [];
+
+  for (const event of frame.events) {
+    switch (event.type) {
+      case "SPIRIT_CAST":
+        affected.push(event.target);
+        break;
+      case "TILE_HIT_ROLLED":
+        affected.push(event.candidate.position);
+        if (!event.destroyed) failed.push(event.candidate.position);
+        break;
+      case "DISTORTED_HIT":
+      case "TILE_DESTROYED":
+        affected.push(event.tile.position);
+        break;
+      case "TILES_RESTORED":
+        affected.push(...event.tiles.map(({ position }) => position));
+        break;
+      case "LIGHTNING_FOLLOW_UP_RESOLVED":
+        if (event.result.kind === "RESTORE_ONE") {
+          if (event.result.position !== undefined) {
+            affected.push(event.result.position);
+          }
+        } else {
+          affected.push(...event.result.tiles.map(({ position }) => position));
+        }
+        break;
+      case "BOARD_SHUFFLED":
+        for (const movement of event.movements) {
+          affected.push(movement.from, movement.to);
+        }
+        break;
+      case "BOARD_CREATED":
+      case "GRACE_APPLIED":
+      case "INITIAL_SPIRITS_DEALT":
+      case "GAME_READY":
+      case "ACTION_ACCEPTED":
+      case "SPECIAL_TILE_ACTIVATED":
+      case "OLD_SPECIAL_CLEARED":
+      case "NEW_SPECIAL_ASSIGNED":
+      case "SPIRIT_USED":
+      case "SPIRIT_REROLLED":
+      case "QUEUE_ADVANCED":
+      case "SPIRITS_MERGED":
+      case "TURN_COMPLETED":
+      case "GAME_CLEARED":
+        break;
+    }
+  }
+
+  return {
+    phase: frame.phase,
+    style: animationStyle(spiritId),
+    ...(spiritId === undefined ? {} : { spiritId }),
+    affectedPositions: uniquePositions(affected),
+    failedPositions: uniquePositions(failed),
+  };
 }
 
 function eventPhase(event: GameEvent): AnimationPhase | undefined {
@@ -101,4 +186,38 @@ function phaseDuration(phase: AnimationPhase): number {
     case "COMPLETE":
       return 220;
   }
+}
+
+function animationStyle(spiritId: SpiritId | undefined): AnimationStyle {
+  switch (spiritId) {
+    case "HELLFIRE":
+    case "GREAT_EXPLOSION":
+      return "FIRE";
+    case "LIGHTNING":
+    case "THUNDER_STRIKE":
+      return "LIGHTNING";
+    case "TORNADO":
+      return "WIND";
+    case "SHOCKWAVE":
+    case "EARTHQUAKE":
+      return "EARTH";
+    case "TIDAL_WAVE":
+    case "RAINSTORM":
+      return "WATER";
+    case "PURIFY":
+    case "WORLD_TREE_RESONANCE":
+      return "ELZOWIN";
+    case "OUTBURST":
+      return "MYSTERY";
+    case undefined:
+      return "NEUTRAL";
+  }
+}
+
+function uniquePositions(positions: readonly Position[]): Position[] {
+  const byKey = new Map<string, Position>();
+  for (const position of positions) {
+    byKey.set(positionKey(position), { ...position });
+  }
+  return [...byKey.values()];
 }

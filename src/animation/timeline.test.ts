@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { GameEvent } from "../game-core/game.ts";
-import { createAnimationTimeline } from "./timeline.ts";
+import { createAnimationCue, createAnimationTimeline } from "./timeline.ts";
 
 test("timeline batches simultaneous tile events and preserves phase order", () => {
   const events: GameEvent[] = [
@@ -38,16 +38,37 @@ test("timeline batches simultaneous tile events and preserves phase order", () =
   assert.ok(timeline.every(({ durationMs }) => durationMs > 0));
 });
 
-function hit(tileId: string): GameEvent {
+test("animation cue targets only event positions and marks failed hits", () => {
+  const timeline = createAnimationTimeline([
+    hit("a"),
+    hit("b", { row: 2, column: 3 }, false),
+  ]);
+  const frame = timeline[0];
+  assert.ok(frame);
+  const cue = createAnimationCue(frame, "THUNDER_STRIKE");
+
+  assert.equal(cue.style, "LIGHTNING");
+  assert.deepEqual(cue.affectedPositions, [
+    { row: 0, column: 0 },
+    { row: 2, column: 3 },
+  ]);
+  assert.deepEqual(cue.failedPositions, [{ row: 2, column: 3 }]);
+});
+
+function hit(
+  tileId: string,
+  position = { row: 0, column: 0 },
+  destroyed = true,
+): GameEvent {
   return {
     type: "TILE_HIT_ROLLED",
     candidate: {
       tileId,
-      position: { row: 0, column: 0 },
+      position,
       tileKind: "ANCIENT",
       destroyChance: 10_000,
     },
-    destroyed: true,
+    destroyed,
   };
 }
 

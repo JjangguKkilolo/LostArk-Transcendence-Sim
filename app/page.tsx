@@ -443,7 +443,7 @@ export default function Home() {
     <main className="app-shell">
       <header className="topbar">
         <div>
-          <p className="eyebrow">LOST ARK · TRANSCENDENCE DUEL</p>
+          <p className="eyebrow">고대 유적 · 장비 초월</p>
           <h1>
             초월 <span>대전</span>
           </h1>
@@ -480,7 +480,7 @@ export default function Home() {
       <section className="duel-grid">
         <BoardPanel
           side="PLAYER"
-          title="PLAYER"
+          title="나의 유적"
           subtitle="당신의 선택"
           state={battle.player}
           definition={definition}
@@ -509,7 +509,7 @@ export default function Home() {
 
         <BoardPanel
           side="AI"
-          title="CHOPAGO"
+          title="초파고의 유적"
           subtitle="확률로 읽는 선택"
           state={battle.ai}
           definition={definition}

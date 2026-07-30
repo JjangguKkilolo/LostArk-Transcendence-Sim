@@ -87,13 +87,46 @@ button {
 }
 
 .ghost-button {
-  justify-self: end;
   color: var(--ink);
   background: transparent;
   border: 1px solid var(--line);
   border-radius: 4px;
   padding: 10px 18px;
   cursor: pointer;
+}
+
+.header-actions {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.current-config {
+  margin-right: 8px;
+  text-align: right;
+}
+
+.current-config span,
+.current-config strong {
+  display: block;
+}
+
+.current-config span {
+  color: var(--gold);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+
+.current-config strong {
+  margin-top: 3px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.settings-button {
+  border-color: rgba(231, 184, 100, 0.48);
+  color: var(--gold-soft);
 }
 
 .status-strip {
@@ -192,7 +225,7 @@ button {
   width: min(100%, 470px);
   aspect-ratio: 1;
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(var(--board-size, 6), 1fr);
   gap: 5px;
   margin: 0 auto;
   padding: 18px;
@@ -519,6 +552,161 @@ button {
   cursor: pointer;
 }
 
+.settings-backdrop {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(2, 5, 10, 0.82);
+  backdrop-filter: blur(10px);
+}
+
+.settings-dialog {
+  width: min(560px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  padding: 26px;
+  border: 1px solid rgba(231, 184, 100, 0.35);
+  border-top: 2px solid var(--gold);
+  background:
+    radial-gradient(circle at 50% 0%, rgba(82, 107, 142, 0.2), transparent 35%),
+    #0d1420;
+  box-shadow: 0 30px 100px rgba(0, 0, 0, 0.65);
+}
+
+.settings-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.settings-heading h2 {
+  margin: 5px 0 0;
+  font-family: Georgia, serif;
+  font-size: 28px;
+}
+
+.settings-heading > button {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  background: transparent;
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.settings-dialog fieldset {
+  margin: 0 0 22px;
+  padding: 0;
+  border: 0;
+}
+
+.settings-dialog legend {
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.choice-grid {
+  display: grid;
+  gap: 7px;
+}
+
+.part-choices {
+  grid-template-columns: repeat(6, 1fr);
+}
+
+.stage-choices {
+  grid-template-columns: repeat(7, 1fr);
+}
+
+.choice-grid button {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  background: rgba(18, 28, 42, 0.8);
+  cursor: pointer;
+}
+
+.choice-grid button:hover,
+.choice-grid button:focus-visible {
+  border-color: var(--gold);
+  color: var(--ink);
+}
+
+.choice-grid .choice-active {
+  border-color: var(--gold);
+  color: #171008;
+  background: linear-gradient(135deg, var(--gold-soft), var(--gold));
+  font-weight: 800;
+}
+
+.grace-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.grace-label legend {
+  margin: 0;
+}
+
+.grace-label strong {
+  color: var(--gold-soft);
+  font-family: Georgia, serif;
+  font-size: 24px;
+}
+
+.settings-dialog input[type="range"] {
+  width: 100%;
+  accent-color: var(--gold);
+}
+
+.range-scale {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.settings-summary {
+  padding: 15px;
+  border-left: 2px solid var(--blue);
+  background: rgba(31, 46, 66, 0.46);
+}
+
+.settings-summary span,
+.settings-summary strong {
+  display: block;
+}
+
+.settings-summary span {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.settings-summary strong {
+  margin-top: 5px;
+  color: var(--gold-soft);
+}
+
+.settings-summary p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.settings-start {
+  margin-top: 14px;
+}
+
 @keyframes cast-pulse {
   50% {
     box-shadow: 0 0 55px rgba(231, 184, 100, 0.35);
@@ -572,6 +760,19 @@ button {
     grid-template-columns: 1fr auto;
   }
 
+  .header-actions {
+    gap: 5px;
+  }
+
+  .current-config {
+    display: none;
+  }
+
+  .ghost-button {
+    padding: 9px 10px;
+    font-size: 11px;
+  }
+
   .round-lockup {
     display: none;
   }
@@ -602,6 +803,14 @@ button {
 
   .recommendation-list {
     grid-template-columns: 1fr;
+  }
+
+  .settings-dialog {
+    padding: 20px 16px;
+  }
+
+  .part-choices {
+    grid-template-columns: repeat(3, 1fr);
   }
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import {
   advanceBattleRound,
@@ -27,7 +27,13 @@ import {
 } from "../src/game-core/board.ts";
 import { SeededRandom } from "../src/game-core/random.ts";
 import type { ActiveSpiritIndex, SpiritCard } from "../src/game-core/spirits.ts";
-import type { Position, Tile } from "../src/game-core/types.ts";
+import type {
+  BoardDefinition,
+  EquipmentPart,
+  Position,
+  Tile,
+  TranscendenceStage,
+} from "../src/game-core/types.ts";
 import { getBoardDefinition } from "../src/game-data/boards.ts";
 import {
   MYSTERY_SPIRIT_DEFINITIONS,
@@ -35,7 +41,34 @@ import {
 } from "../src/game-data/spirits.ts";
 import { rankHeuristicActions } from "../src/recommendation/heuristic.ts";
 
-const DEFINITION = getBoardDefinition("SHOULDERS", 1);
+type GameConfig = Readonly<{
+  equipmentPart: EquipmentPart;
+  stage: TranscendenceStage;
+  graceLevel: number;
+}>;
+
+const DEFAULT_CONFIG: GameConfig = {
+  equipmentPart: "SHOULDERS",
+  stage: 1,
+  graceLevel: 0,
+};
+const EQUIPMENT_PARTS: readonly EquipmentPart[] = [
+  "WEAPON",
+  "HELMET",
+  "SHOULDERS",
+  "CHEST",
+  "PANTS",
+  "GLOVES",
+];
+const STAGES: readonly TranscendenceStage[] = [1, 2, 3, 4, 5, 6, 7];
+const PART_NAMES: Readonly<Record<EquipmentPart, string>> = {
+  WEAPON: "무기",
+  HELMET: "투구",
+  SHOULDERS: "견갑",
+  CHEST: "상의",
+  PANTS: "하의",
+  GLOVES: "장갑",
+};
 const SPIRIT_NAMES = new Map(
   [...NORMAL_SPIRIT_DEFINITIONS, ...MYSTERY_SPIRIT_DEFINITIONS].map(
     ({ id, name }) => [id, name],
@@ -51,7 +84,16 @@ const SPECIAL_NAMES = {
 } as const;
 
 export default function Home() {
-  const [battle, setBattle] = useState<BattleState>(createInitialBattle);
+  const [config, setConfig] = useState<GameConfig>(DEFAULT_CONFIG);
+  const [draftConfig, setDraftConfig] = useState<GameConfig>(DEFAULT_CONFIG);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const definition = useMemo(
+    () => getBoardDefinition(config.equipmentPart, config.stage),
+    [config],
+  );
+  const [battle, setBattle] = useState<BattleState>(() =>
+    createInitialBattle(DEFAULT_CONFIG),
+  );
   const [selectedIndex, setSelectedIndex] =
     useState<ActiveSpiritIndex>(0);
   const [playerPhase, setPlayerPhase] = useState<string>();
@@ -65,14 +107,14 @@ export default function Home() {
   const recommendations = useMemo(
     () =>
       battle.player.status === "PLAYING"
-        ? rankHeuristicActions(DEFINITION, battle.player)
+        ? rankHeuristicActions(definition, battle.player)
         : [],
-    [battle.player],
+    [battle.player, definition],
   );
   const bestPlayerAction = recommendations[0]?.action;
   const legalActions = useMemo(
-    () => getLegalActions(DEFINITION, battle.player),
-    [battle.player],
+    () => getLegalActions(definition, battle.player),
+    [battle.player, definition],
   );
   const legalTargetKeys = useMemo(
     () =>
@@ -99,10 +141,19 @@ export default function Home() {
     return () => window.clearTimeout(timer);
   }, [battle.phase]);
 
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSettingsOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [settingsOpen]);
+
   const submitAction = (action: GameAction) => {
     if (battle.phase !== "PLAYER_DECIDING") return;
     if (battle.ai.status === "CLEARED") {
-      const revealed = revealPlayerOnlyAction(DEFINITION, battle, action);
+      const revealed = revealPlayerOnlyAction(definition, battle, action);
       if (!revealed.ok) {
         setMessage(revealed.error);
         return;
@@ -110,17 +161,17 @@ export default function Home() {
       resolveAndDisplay(revealed.state);
       return;
     }
-    const playerLocked = lockPlayerAction(DEFINITION, battle, action);
+    const playerLocked = lockPlayerAction(definition, battle, action);
     if (!playerLocked.ok) {
       setMessage(playerLocked.error);
       return;
     }
     const calculating = beginAiCalculation(playerLocked.state);
     if (!calculating.ok) return;
-    const aiChoice = rankHeuristicActions(DEFINITION, calculating.state.ai)[0];
+    const aiChoice = rankHeuristicActions(definition, calculating.state.ai)[0];
     if (aiChoice === undefined) return;
     const aiLocked = lockAiAction(
-      DEFINITION,
+      definition,
       calculating.state,
       aiChoice.action,
     );
@@ -132,7 +183,7 @@ export default function Home() {
 
   const resolveAndDisplay = (resolvingBattle: BattleState) => {
     const resolved = resolveBattleRound(
-      DEFINITION,
+      definition,
       resolvingBattle,
       playerRandom.current,
       aiRandom.current,
@@ -165,10 +216,10 @@ export default function Home() {
     const advanced = advanceBattleRound(battle);
     if (!advanced.ok) return;
     if (advanced.state.phase === "AI_CALCULATING") {
-      const aiChoice = rankHeuristicActions(DEFINITION, advanced.state.ai)[0];
+      const aiChoice = rankHeuristicActions(definition, advanced.state.ai)[0];
       if (aiChoice === undefined) return;
       const aiLocked = lockAiAction(
-        DEFINITION,
+        definition,
         advanced.state,
         aiChoice.action,
       );
@@ -189,11 +240,31 @@ export default function Home() {
   const reset = () => {
     playerRandom.current = new SeededRandom(11_031);
     aiRandom.current = new SeededRandom(91_117);
-    setBattle(createInitialBattle());
+    setBattle(createInitialBattle(config));
     setSelectedIndex(0);
     setPlayerPhase(undefined);
     setAiPhase(undefined);
     setMessage("새 대전을 시작했습니다.");
+  };
+
+  const openSettings = () => {
+    setDraftConfig(config);
+    setSettingsOpen(true);
+  };
+
+  const startConfiguredBattle = () => {
+    const nextBattle = createInitialBattle(draftConfig);
+    playerRandom.current = new SeededRandom(11_031);
+    aiRandom.current = new SeededRandom(91_117);
+    setConfig(draftConfig);
+    setBattle(nextBattle);
+    setSelectedIndex(0);
+    setPlayerPhase(undefined);
+    setAiPhase(undefined);
+    setSettingsOpen(false);
+    setMessage(
+      `${PART_NAMES[draftConfig.equipmentPart]} ${draftConfig.stage}단계 · 가호 ${draftConfig.graceLevel}로 시작합니다.`,
+    );
   };
 
   return (
@@ -209,9 +280,18 @@ export default function Home() {
           <span>ROUND</span>
           <strong>{battle.round.toString().padStart(2, "0")}</strong>
         </div>
-        <button className="ghost-button" onClick={reset}>
-          새 판
-        </button>
+        <div className="header-actions">
+          <div className="current-config">
+            <span>{PART_NAMES[config.equipmentPart]}</span>
+            <strong>{config.stage}단계 · 가호 {config.graceLevel}</strong>
+          </div>
+          <button className="ghost-button" onClick={reset}>
+            다시 시작
+          </button>
+          <button className="ghost-button settings-button" onClick={openSettings}>
+            설정
+          </button>
+        </div>
       </header>
 
       <section className="status-strip" aria-live="polite">
@@ -226,6 +306,7 @@ export default function Home() {
           title="PLAYER"
           subtitle="당신의 선택"
           state={battle.player}
+          definition={definition}
           animationPhase={playerPhase}
           selectedIndex={selectedIndex}
           onSelectCard={setSelectedIndex}
@@ -254,13 +335,14 @@ export default function Home() {
           title="CHOPAGO"
           subtitle="확률로 읽는 선택"
           state={battle.ai}
+          definition={definition}
           animationPhase={aiPhase}
           selectedIndex={0}
           onSelectCard={() => undefined}
           legalTargetKeys={new Set()}
           recommendedAction={
             battle.ai.status === "PLAYING"
-              ? rankHeuristicActions(DEFINITION, battle.ai)[0]?.action
+              ? rankHeuristicActions(definition, battle.ai)[0]?.action
               : undefined
           }
           onTarget={() => undefined}
@@ -309,6 +391,15 @@ export default function Home() {
           )}
         </div>
       </section>
+
+      {settingsOpen && (
+        <GameSettings
+          config={draftConfig}
+          onChange={setDraftConfig}
+          onClose={() => setSettingsOpen(false)}
+          onStart={startConfiguredBattle}
+        />
+      )}
     </main>
   );
 }
@@ -318,6 +409,7 @@ type BoardPanelProps = {
   title: string;
   subtitle: string;
   state: GameState;
+  definition: BoardDefinition;
   animationPhase: string | undefined;
   selectedIndex: ActiveSpiritIndex;
   onSelectCard: (index: ActiveSpiritIndex) => void;
@@ -350,16 +442,19 @@ function BoardPanel(props: BoardPanelProps) {
         </div>
       </div>
 
-      <div className={`board animation-${props.animationPhase ?? "idle"}`}>
-        {Array.from({ length: DEFINITION.size ** 2 }, (_, index) => {
+      <div
+        className={`board animation-${props.animationPhase ?? "idle"}`}
+        style={{ "--board-size": props.definition.size } as CSSProperties}
+      >
+        {Array.from({ length: props.definition.size ** 2 }, (_, index) => {
           const position = {
-            row: Math.floor(index / DEFINITION.size),
-            column: index % DEFINITION.size,
+            row: Math.floor(index / props.definition.size),
+            column: index % props.definition.size,
           };
           const playable = isPositionInShape(
             position,
-            DEFINITION.size,
-            DEFINITION.shape,
+            props.definition.size,
+            props.definition.shape,
           );
           const key = positionKey(position);
           const tile = tileByPosition.get(key);
@@ -470,8 +565,105 @@ function Score({ side, state }: { side: string; state: GameState }) {
   );
 }
 
-function createInitialBattle(): BattleState {
-  const setup = createGame(DEFINITION, 0, new SeededRandom(2_024));
+function GameSettings({
+  config,
+  onChange,
+  onClose,
+  onStart,
+}: {
+  config: GameConfig;
+  onChange: (config: GameConfig) => void;
+  onClose: () => void;
+  onStart: () => void;
+}) {
+  return (
+    <div className="settings-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        className="settings-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="settings-heading">
+          <div>
+            <p className="eyebrow">BATTLE SETUP</p>
+            <h2 id="settings-title">새 초월 설정</h2>
+          </div>
+          <button onClick={onClose} aria-label="설정 닫기">×</button>
+        </div>
+
+        <fieldset>
+          <legend>장비 부위</legend>
+          <div className="choice-grid part-choices">
+            {EQUIPMENT_PARTS.map((part) => (
+              <button
+                key={part}
+                className={config.equipmentPart === part ? "choice-active" : ""}
+                onClick={() => onChange({ ...config, equipmentPart: part })}
+              >
+                {PART_NAMES[part]}
+              </button>
+            ))}
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>초월 단계</legend>
+          <div className="choice-grid stage-choices">
+            {STAGES.map((stage) => (
+              <button
+                key={stage}
+                className={config.stage === stage ? "choice-active" : ""}
+                onClick={() => onChange({ ...config, stage })}
+              >
+                {stage}
+              </button>
+            ))}
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <div className="grace-label">
+            <legend>엘조윈의 가호</legend>
+            <strong>{config.graceLevel}</strong>
+          </div>
+          <input
+            type="range"
+            min="0"
+            max="10"
+            step="1"
+            value={config.graceLevel}
+            onChange={(event) =>
+              onChange({ ...config, graceLevel: Number(event.target.value) })
+            }
+            aria-label="엘조윈의 가호 단계"
+          />
+          <div className="range-scale"><span>0</span><span>10</span></div>
+        </fieldset>
+
+        <div className="settings-summary">
+          <span>선택한 대전</span>
+          <strong>
+            {PART_NAMES[config.equipmentPart]} {config.stage}단계 · 가호 {config.graceLevel}
+          </strong>
+          <p>양측은 같은 초기 판에서 시작하고, 파괴 결과는 각자 독립적으로 계산됩니다.</p>
+        </div>
+        <button className="primary-button settings-start" onClick={onStart}>
+          이 조건으로 대전 시작
+        </button>
+      </section>
+    </div>
+  );
+}
+
+function createInitialBattle(config: GameConfig): BattleState {
+  const definition = getBoardDefinition(config.equipmentPart, config.stage);
+  const setup = createGame(
+    definition,
+    config.graceLevel,
+    new SeededRandom(2_024),
+  );
   if (!setup.ok) throw new Error(setup.error.message);
   return createBattle(setup.state);
 }

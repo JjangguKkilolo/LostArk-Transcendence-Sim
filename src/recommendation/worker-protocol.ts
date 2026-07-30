@@ -7,6 +7,8 @@ export type ChopagoWorkerRequest = Readonly<{
   definition: BoardDefinition;
   state: GameState;
   seed: number;
+  playerState?: GameState;
+  playerSeed?: number;
   sampleCount: number;
   maxRolloutTurns: number;
   timeBudgetMs: number;
@@ -23,6 +25,7 @@ export type ChopagoWorkerResponse =
       type: "SUCCESS";
       requestId: number;
       recommendations: readonly ChopagoWorkerRecommendation[];
+      playerRecommendations: readonly ChopagoWorkerRecommendation[];
     }>
   | Readonly<{
       type: "ERROR";

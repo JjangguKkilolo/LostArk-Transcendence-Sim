@@ -24,10 +24,24 @@ workerScope.onmessage = async (
         timeBudgetMs: request.timeBudgetMs,
       },
     );
+    const playerRecommendations =
+      request.playerState === undefined || request.playerSeed === undefined
+        ? []
+        : await rankMonteCarloActions(
+            request.definition,
+            request.playerState,
+            new SeededRandom(request.playerSeed),
+            {
+              sampleCount: request.sampleCount,
+              maxRolloutTurns: request.maxRolloutTurns,
+              timeBudgetMs: request.timeBudgetMs,
+            },
+          );
     const response: ChopagoWorkerResponse = {
       type: "SUCCESS",
       requestId: request.requestId,
       recommendations: recommendations.slice(0, 3),
+      playerRecommendations,
     };
     workerScope.postMessage(response);
   } catch (error) {

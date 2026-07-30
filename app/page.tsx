@@ -45,6 +45,13 @@ import type {
   ChopagoWorkerRequest,
   ChopagoWorkerResponse,
 } from "../src/recommendation/worker-protocol.ts";
+import {
+  aggregateTurnAnalyses,
+  analyzeTurn,
+  type CumulativeAnalysis,
+  type LuckLabel,
+  type TurnAnalysis,
+} from "../src/analysis/turn-analysis.ts";
 
 const MONTE_CARLO_SAMPLE_COUNT = 64;
 const MONTE_CARLO_MAX_TURNS = 24;
@@ -99,6 +106,7 @@ export default function Home() {
   const [aiThinking, setAiThinking] = useState(false);
   const [aiAnalysis, setAiAnalysis] =
     useState<readonly ChopagoWorkerRecommendation[]>([]);
+  const [turnAnalyses, setTurnAnalyses] = useState<readonly TurnAnalysis[]>([]);
   const definition = useMemo(
     () => getBoardDefinition(config.equipmentPart, config.stage),
     [config],
@@ -146,6 +154,10 @@ export default function Home() {
       ),
     [legalActions, selectedIndex],
   );
+  const cumulativeAnalysis = useMemo(
+    () => aggregateTurnAnalyses(turnAnalyses),
+    [turnAnalyses],
+  );
 
   useEffect(() => {
     if (battle.phase !== "ROUND_SUMMARY") return;
@@ -190,6 +202,7 @@ export default function Home() {
     const useRecommendation = (
       action: GameAction,
       analysis: readonly ChopagoWorkerRecommendation[],
+      playerRecommendations: readonly ChopagoWorkerRecommendation[],
     ) => {
       if (requestId !== aiRequestId.current) return;
       worker.terminate();
@@ -206,7 +219,7 @@ export default function Home() {
         setMessage(resolving.error);
         return;
       }
-      resolveAndDisplay(resolving.state);
+      resolveAndDisplay(resolving.state, playerRecommendations);
     };
 
     const useHeuristicFallback = () => {
@@ -220,7 +233,7 @@ export default function Home() {
         return;
       }
       setMessage("정밀 계산을 완료하지 못해 빠른 추천으로 진행합니다.");
-      useRecommendation(fallback.action, []);
+      useRecommendation(fallback.action, [], []);
     };
 
     worker.onmessage = (event: MessageEvent<ChopagoWorkerResponse>) => {
@@ -234,7 +247,11 @@ export default function Home() {
         useHeuristicFallback();
         return;
       }
-      useRecommendation(best.action, event.data.recommendations);
+      useRecommendation(
+        best.action,
+        event.data.recommendations,
+        event.data.playerRecommendations,
+      );
     };
     worker.onerror = useHeuristicFallback;
 
@@ -243,6 +260,12 @@ export default function Home() {
       definition,
       state: calculatingBattle.ai,
       seed: aiRecommendationRandom.current.nextUint32(),
+      ...(calculatingBattle.pendingPlayerAction === undefined
+        ? {}
+        : {
+            playerState: calculatingBattle.player,
+            playerSeed: aiRecommendationRandom.current.nextUint32(),
+          }),
       sampleCount: MONTE_CARLO_SAMPLE_COUNT,
       maxRolloutTurns: MONTE_CARLO_MAX_TURNS,
       timeBudgetMs: MONTE_CARLO_TIME_BUDGET_MS,
@@ -272,7 +295,10 @@ export default function Home() {
     requestAiAction(calculating.state);
   };
 
-  const resolveAndDisplay = (resolvingBattle: BattleState) => {
+  const resolveAndDisplay = (
+    resolvingBattle: BattleState,
+    playerRecommendations: readonly ChopagoWorkerRecommendation[] = [],
+  ) => {
     const resolved = resolveBattleRound(
       definition,
       resolvingBattle,
@@ -285,6 +311,21 @@ export default function Home() {
     }
 
     setBattle(resolved.state);
+    const latestRound = resolved.state.latestRound;
+    if (
+      latestRound?.playerAction !== undefined &&
+      playerRecommendations.length > 0
+    ) {
+      const analysis = analyzeTurn(
+        latestRound.playerBefore,
+        latestRound.playerAfter,
+        latestRound.playerAction,
+        latestRound.playerEvents,
+        rankHeuristicActions(definition, latestRound.playerBefore),
+        playerRecommendations,
+      );
+      setTurnAnalyses((current) => [...current, analysis]);
+    }
     playTimeline(
       resolved.state.latestRound?.playerEvents ?? [],
       setPlayerPhase,
@@ -329,6 +370,7 @@ export default function Home() {
     setPlayerPhase(undefined);
     setAiPhase(undefined);
     setAiAnalysis([]);
+    setTurnAnalyses([]);
     setMessage("새 대전을 시작했습니다.");
   };
 
@@ -349,6 +391,7 @@ export default function Home() {
     setPlayerPhase(undefined);
     setAiPhase(undefined);
     setAiAnalysis([]);
+    setTurnAnalyses([]);
     setSettingsOpen(false);
     setMessage(
       `${PART_NAMES[draftConfig.equipmentPart]} ${draftConfig.stage}단계 · 가호 ${draftConfig.graceLevel}로 시작합니다.`,
@@ -493,6 +536,11 @@ export default function Home() {
           )}
         </div>
       </section>
+
+      <DecisionLuckReport
+        latest={turnAnalyses.at(-1)}
+        cumulative={cumulativeAnalysis}
+      />
 
       {settingsOpen && (
         <GameSettings
@@ -711,6 +759,118 @@ function AiAnalysis({
   );
 }
 
+function DecisionLuckReport({
+  latest,
+  cumulative,
+}: {
+  latest: TurnAnalysis | undefined;
+  cumulative: CumulativeAnalysis;
+}) {
+  return (
+    <section className="judgment-report">
+      <div className="report-heading">
+        <div>
+          <p className="eyebrow">DECISION × LUCK</p>
+          <h2>판단과 운 리포트</h2>
+        </div>
+        <p>
+          판단은 결과가 나오기 전 선택의 품질, 운은 기대값보다 실제로 더 부순
+          정도입니다.
+        </p>
+      </div>
+
+      {latest === undefined ? (
+        <div className="report-empty">
+          첫 선택을 완료하면 초파고가 판단과 결과 운을 따로 분석합니다.
+        </div>
+      ) : (
+        <div className="report-grid">
+          <article className="report-card decision-card">
+            <div className="report-card-title">
+              <span>판단</span>
+              <strong>{decisionLabel(latest)}</strong>
+            </div>
+            <div className="report-number">
+              <strong>{latest.decision.qualityPercentile.toFixed(0)}</strong>
+              <span>점</span>
+            </div>
+            <div className="report-meter">
+              <span
+                style={{
+                  width: `${Math.max(latest.decision.qualityPercentile, 2)}%`,
+                }}
+              />
+            </div>
+            <dl>
+              <div>
+                <dt>선택 순위</dt>
+                <dd>
+                  {latest.decision.chosenRank} / {latest.decision.legalActionCount}
+                </dd>
+              </div>
+              <div>
+                <dt>판단 손실</dt>
+                <dd>{latest.decision.decisionLoss.toFixed(2)}</dd>
+              </div>
+            </dl>
+          </article>
+
+          <article className={`report-card luck-card luck-${latest.luck.label.toLowerCase()}`}>
+            <div className="report-card-title">
+              <span>운</span>
+              <strong>{luckLabel(latest.luck.label)}</strong>
+            </div>
+            <div className="report-number">
+              <strong>{signed(latest.luck.netRemovalDelta)}</strong>
+              <span>석판</span>
+            </div>
+            <div className="expectation-row">
+              <div>
+                <span>기대 제거</span>
+                <strong>{latest.luck.expectedNetRemoval.toFixed(2)}</strong>
+              </div>
+              <span>→</span>
+              <div>
+                <span>실제 제거</span>
+                <strong>{latest.luck.actualNetRemoval}</strong>
+              </div>
+            </div>
+            <p>
+              확률 타격 {latest.luck.probabilisticHits}회 중{" "}
+              {latest.luck.successfulProbabilisticHits}회 성공
+            </p>
+          </article>
+
+          <article className="report-card cumulative-card">
+            <div className="report-card-title">
+              <span>누적</span>
+              <strong>{cumulative.analyzedTurns}라운드</strong>
+            </div>
+            <div className="cumulative-stats">
+              <div>
+                <span>평균 판단</span>
+                <strong>{cumulative.averageQualityPercentile.toFixed(0)}점</strong>
+              </div>
+              <div>
+                <span>평균 순위</span>
+                <strong>{cumulative.averageChosenRank.toFixed(1)}위</strong>
+              </div>
+              <div>
+                <span>누적 운</span>
+                <strong>{signed(cumulative.cumulativeLuckDelta)}</strong>
+              </div>
+              <div>
+                <span>행운 / 불운</span>
+                <strong>{cumulative.luckyTurns} / {cumulative.unluckyTurns}</strong>
+              </div>
+            </div>
+          </article>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function GameSettings({
   config,
   onChange,
@@ -873,4 +1033,27 @@ function battleResultMessage(state: BattleState) {
   return state.result?.winner === "PLAYER"
     ? "플레이어가 초파고를 이겼습니다!"
     : "초파고가 이번 대전에서 승리했습니다.";
+}
+
+function decisionLabel(analysis: TurnAnalysis) {
+  const score = analysis.decision.qualityPercentile;
+  if (score >= 90) return "초파고급 선택";
+  if (score >= 70) return "좋은 판단";
+  if (score >= 40) return "아쉬운 판단";
+  return "위험한 선택";
+}
+
+function luckLabel(label: LuckLabel) {
+  const labels: Readonly<Record<LuckLabel, string>> = {
+    VERY_UNLUCKY: "매우 불운",
+    UNLUCKY: "불운",
+    EXPECTED: "기대 범위",
+    LUCKY: "행운",
+    VERY_LUCKY: "매우 행운",
+  };
+  return labels[label];
+}
+
+function signed(value: number) {
+  return `${value > 0 ? "+" : ""}${value.toFixed(2)}`;
 }

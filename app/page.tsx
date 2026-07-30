@@ -11,6 +11,8 @@ import {
   lockPlayerAction,
   revealPlayerOnlyAction,
   resolveBattleRound,
+  type BattleComparisonReason,
+  type BattleRound,
   type BattleState,
 } from "../src/battle/battle.ts";
 import { createAnimationTimeline } from "../src/animation/timeline.ts";
@@ -63,6 +65,11 @@ type GameConfig = Readonly<{
   graceLevel: number;
 }>;
 
+type AnalyzedRound = Readonly<{
+  round: number;
+  analysis: TurnAnalysis;
+}>;
+
 const DEFAULT_CONFIG: GameConfig = {
   equipmentPart: "SHOULDERS",
   stage: 1,
@@ -103,10 +110,12 @@ export default function Home() {
   const [config, setConfig] = useState<GameConfig>(DEFAULT_CONFIG);
   const [draftConfig, setDraftConfig] = useState<GameConfig>(DEFAULT_CONFIG);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [resultOpen, setResultOpen] = useState(false);
   const [aiThinking, setAiThinking] = useState(false);
   const [aiAnalysis, setAiAnalysis] =
     useState<readonly ChopagoWorkerRecommendation[]>([]);
-  const [turnAnalyses, setTurnAnalyses] = useState<readonly TurnAnalysis[]>([]);
+  const [turnAnalyses, setTurnAnalyses] =
+    useState<readonly AnalyzedRound[]>([]);
   const definition = useMemo(
     () => getBoardDefinition(config.equipmentPart, config.stage),
     [config],
@@ -155,7 +164,7 @@ export default function Home() {
     [legalActions, selectedIndex],
   );
   const cumulativeAnalysis = useMemo(
-    () => aggregateTurnAnalyses(turnAnalyses),
+    () => aggregateTurnAnalyses(turnAnalyses.map(({ analysis }) => analysis)),
     [turnAnalyses],
   );
 
@@ -176,6 +185,19 @@ export default function Home() {
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [settingsOpen]);
+
+  useEffect(() => {
+    if (battle.phase === "BATTLE_FINISHED") setResultOpen(true);
+  }, [battle.phase]);
+
+  useEffect(() => {
+    if (!resultOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setResultOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [resultOpen]);
 
   useEffect(
     () => () => {
@@ -324,7 +346,10 @@ export default function Home() {
         rankHeuristicActions(definition, latestRound.playerBefore),
         playerRecommendations,
       );
-      setTurnAnalyses((current) => [...current, analysis]);
+      setTurnAnalyses((current) => [
+        ...current,
+        { round: latestRound.round, analysis },
+      ]);
     }
     playTimeline(
       resolved.state.latestRound?.playerEvents ?? [],
@@ -371,11 +396,13 @@ export default function Home() {
     setAiPhase(undefined);
     setAiAnalysis([]);
     setTurnAnalyses([]);
+    setResultOpen(false);
     setMessage("새 대전을 시작했습니다.");
   };
 
   const openSettings = () => {
     setDraftConfig(config);
+    setResultOpen(false);
     setSettingsOpen(true);
   };
 
@@ -393,6 +420,7 @@ export default function Home() {
     setAiAnalysis([]);
     setTurnAnalyses([]);
     setSettingsOpen(false);
+    setResultOpen(false);
     setMessage(
       `${PART_NAMES[draftConfig.equipmentPart]} ${draftConfig.stage}단계 · 가호 ${draftConfig.graceLevel}로 시작합니다.`,
     );
@@ -429,6 +457,11 @@ export default function Home() {
           <button className="ghost-button settings-button" onClick={openSettings}>
             설정
           </button>
+          {battle.phase === "BATTLE_FINISHED" && !resultOpen && (
+            <button className="ghost-button result-button" onClick={() => setResultOpen(true)}>
+              결과
+            </button>
+          )}
         </div>
       </header>
 
@@ -538,7 +571,7 @@ export default function Home() {
       </section>
 
       <DecisionLuckReport
-        latest={turnAnalyses.at(-1)}
+        latest={turnAnalyses.at(-1)?.analysis}
         cumulative={cumulativeAnalysis}
       />
 
@@ -548,6 +581,18 @@ export default function Home() {
           onChange={setDraftConfig}
           onClose={() => setSettingsOpen(false)}
           onStart={startConfiguredBattle}
+        />
+      )}
+
+      {battle.phase === "BATTLE_FINISHED" && resultOpen && (
+        <BattleResultDialog
+          battle={battle}
+          config={config}
+          analyses={turnAnalyses}
+          cumulative={cumulativeAnalysis}
+          onClose={() => setResultOpen(false)}
+          onRematch={reset}
+          onNewSetup={openSettings}
         />
       )}
     </main>
@@ -871,6 +916,196 @@ function DecisionLuckReport({
   );
 }
 
+function BattleResultDialog({
+  battle,
+  config,
+  analyses,
+  cumulative,
+  onClose,
+  onRematch,
+  onNewSetup,
+}: {
+  battle: BattleState;
+  config: GameConfig;
+  analyses: readonly AnalyzedRound[];
+  cumulative: CumulativeAnalysis;
+  onClose: () => void;
+  onRematch: () => void;
+  onNewSetup: () => void;
+}) {
+  const winner = battle.result?.winner ?? "TIE";
+  const playerWon = winner === "PLAYER";
+  const aiWon = winner === "AI";
+
+  return (
+    <div className="result-backdrop" role="presentation">
+      <section
+        className={`result-dialog result-${winner.toLowerCase()}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="result-title"
+      >
+        <button className="result-close" onClick={onClose} aria-label="결과 닫기">
+          ×
+        </button>
+        <div className="result-hero">
+          <p className="eyebrow">BATTLE COMPLETE</p>
+          <span className="result-kicker">
+            {PART_NAMES[config.equipmentPart]} {config.stage}단계 · 가호{" "}
+            {config.graceLevel}
+          </span>
+          <h2 id="result-title">
+            {winner === "TIE"
+              ? "무승부"
+              : playerWon
+                ? "PLAYER 승리"
+                : "CHOPAGO 승리"}
+          </h2>
+          <p>{resultReasonLabel(battle.result?.reason)}</p>
+        </div>
+
+        <div className="final-score">
+          <FinalSide
+            label="PLAYER"
+            won={playerWon}
+            grade={battle.player.clearGrade}
+            summons={battle.player.summonCount}
+          />
+          <div className="final-vs">VS</div>
+          <FinalSide
+            label="CHOPAGO"
+            won={aiWon}
+            grade={battle.ai.clearGrade}
+            summons={battle.ai.summonCount}
+          />
+        </div>
+
+        <div className="final-analysis">
+          <div>
+            <span>평균 판단</span>
+            <strong>{cumulative.averageQualityPercentile.toFixed(0)}점</strong>
+          </div>
+          <div>
+            <span>평균 선택 순위</span>
+            <strong>{cumulative.averageChosenRank.toFixed(1)}위</strong>
+          </div>
+          <div>
+            <span>누적 운</span>
+            <strong>{signed(cumulative.cumulativeLuckDelta)}</strong>
+          </div>
+          <div>
+            <span>분석 라운드</span>
+            <strong>{cumulative.analyzedTurns}회</strong>
+          </div>
+        </div>
+
+        <div className="history-heading">
+          <div>
+            <p className="eyebrow">ROUND ARCHIVE</p>
+            <h3>전체 라운드 기록</h3>
+          </div>
+          <span>{battle.history.length} ROUNDS</span>
+        </div>
+        <div className="round-history">
+          {battle.history.map((round) => (
+            <RoundHistoryRow
+              key={round.round}
+              round={round}
+              analysis={
+                analyses.find((item) => item.round === round.round)?.analysis
+              }
+            />
+          ))}
+        </div>
+
+        <div className="result-actions">
+          <button className="ghost-button" onClick={onNewSetup}>
+            다른 조건
+          </button>
+          <button className="primary-button" onClick={onRematch}>
+            같은 조건으로 재대결
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function FinalSide({
+  label,
+  won,
+  grade,
+  summons,
+}: {
+  label: string;
+  won: boolean;
+  grade: GameState["clearGrade"];
+  summons: number;
+}) {
+  return (
+    <div className={`final-side ${won ? "final-winner" : ""}`}>
+      <span>{label}</span>
+      <div className="grade-stars" aria-label={`${grade ?? 0}등급`}>
+        {Array.from({ length: 3 }, (_, index) => (
+          <i key={index} className={index < (grade ?? 0) ? "star-on" : ""}>
+            ★
+          </i>
+        ))}
+      </div>
+      <strong>{summons}회 소환</strong>
+    </div>
+  );
+}
+
+function RoundHistoryRow({
+  round,
+  analysis,
+}: {
+  round: BattleRound;
+  analysis: TurnAnalysis | undefined;
+}) {
+  return (
+    <div className="history-row">
+      <span className="history-round">
+        R{round.round.toString().padStart(2, "0")}
+      </span>
+      <div className="history-choice">
+        <small>PLAYER</small>
+        <strong>
+          {round.playerAction === undefined
+            ? "완료"
+            : actionLabel(round.playerAction, round.playerBefore)}
+        </strong>
+        <span>
+          {ancientCount(round.playerBefore)} → {ancientCount(round.playerAfter)}
+        </span>
+      </div>
+      <div className="history-choice history-ai-choice">
+        <small>CHOPAGO</small>
+        <strong>
+          {round.aiAction === undefined
+            ? "완료"
+            : actionLabel(round.aiAction, round.aiBefore)}
+        </strong>
+        <span>
+          {ancientCount(round.aiBefore)} → {ancientCount(round.aiAfter)}
+        </span>
+      </div>
+      <div className="history-verdict">
+        <strong>{roundWinnerLabel(round.comparison.winner)}</strong>
+        {analysis === undefined ? (
+          <small>분석 없음</small>
+        ) : (
+          <small>
+            판단 {analysis.decision.qualityPercentile.toFixed(0)} ·{" "}
+            {luckLabel(analysis.luck.label)}
+          </small>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function GameSettings({
   config,
   onChange,
@@ -1056,4 +1291,20 @@ function luckLabel(label: LuckLabel) {
 
 function signed(value: number) {
   return `${value > 0 ? "+" : ""}${value.toFixed(2)}`;
+}
+
+function resultReasonLabel(reason: BattleComparisonReason | undefined) {
+  const labels = {
+    CLEAR_STATUS: "먼저 초월을 완료해 승리했습니다.",
+    CLEAR_GRADE: "더 높은 초월 등급으로 승리했습니다.",
+    SUMMON_COUNT: "더 적은 정령 소환으로 승리했습니다.",
+    REMAINING_ANCIENT: "더 많은 석판을 제거해 앞섰습니다.",
+    TIE: "모든 최종 기록이 같습니다.",
+  } as const;
+  return reason === undefined ? "최종 기록을 집계했습니다." : labels[reason];
+}
+
+function roundWinnerLabel(winner: BattleRound["comparison"]["winner"]) {
+  if (winner === "TIE") return "동률";
+  return winner === "PLAYER" ? "PLAYER 우세" : "CHOPAGO 우세";
 }

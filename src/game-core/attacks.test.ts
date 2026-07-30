@@ -3,7 +3,9 @@ import test from "node:test";
 
 import {
   createFixedAttackPlan,
+  createElzowinAttackPlan,
   createLinearAttackPlan,
+  createOutburstAttackPlan,
   rollAttackPlan,
 } from "./attacks.ts";
 import { createBoardSetup, positionKey } from "./board.ts";
@@ -156,7 +158,7 @@ test("linear level one chance loses 15 percent per step with a 10 percent floor"
 test("linear level two is guaranteed and level three ignores distorted", () => {
   const definition = getBoardDefinition("WEAPON", 1);
   const board = createBoardSetup(definition, 0, new SeededRandom(1)).board;
-  const target = { row: 1, column: 2 };
+  const target = { row: 1, column: 3 };
   const levelTwo = createLinearAttackPlan(
     definition,
     board,
@@ -171,7 +173,7 @@ test("linear level two is guaranteed and level three ignores distorted", () => {
   );
 
   assert.equal(chanceAt(levelTwo, target.row, target.column), 10_000);
-  assert.equal(chanceAt(levelThree, target.row, target.column), 0);
+  assert.equal(chanceAt(levelThree, 1, 2), 0);
   assert.ok(
     levelThree.candidates
       .filter(({ tileKind }) => tileKind === "ANCIENT")
@@ -204,7 +206,7 @@ test("level one center and non-center chances match each spirit", () => {
 test("level two is guaranteed and level three ignores distorted tiles", () => {
   const definition = getBoardDefinition("WEAPON", 1);
   const board = createBoardSetup(definition, 0, new SeededRandom(1)).board;
-  const target = { row: 1, column: 2 };
+  const target = { row: 1, column: 3 };
 
   const levelTwo = createFixedAttackPlan(
     definition,
@@ -220,11 +222,107 @@ test("level two is guaranteed and level three ignores distorted tiles", () => {
   );
 
   assert.equal(chanceAt(levelTwo, target.row, target.column), 10_000);
-  assert.equal(chanceAt(levelThree, target.row, target.column), 0);
+  assert.equal(chanceAt(levelThree, 1, 2), 0);
   assert.ok(
     levelThree.candidates
       .filter(({ tileKind }) => tileKind === "ANCIENT")
       .every(({ destroyChance }) => destroyChance === 10_000),
+  );
+});
+
+test("purify expands from a horizontal line to a cross and destroys distorted", () => {
+  const definition = getBoardDefinition("WEAPON", 1);
+  const board = createBoardSetup(definition, 0, new SeededRandom(1)).board;
+  const target = { row: 1, column: 2 };
+  const levelOne = createElzowinAttackPlan(
+    definition,
+    board,
+    normalCard("PURIFY", 1),
+    target,
+  );
+  const levelTwo = createElzowinAttackPlan(
+    definition,
+    board,
+    normalCard("PURIFY", 2),
+    target,
+  );
+  const levelThree = createElzowinAttackPlan(
+    definition,
+    board,
+    normalCard("PURIFY", 3),
+    target,
+  );
+
+  assert.equal(levelOne.candidates.length, 3);
+  assert.equal(chanceAt(levelOne, 1, 1), 5_000);
+  assert.equal(chanceAt(levelOne, 1, 2), 10_000);
+  assert.equal(chanceAt(levelTwo, 1, 1), 10_000);
+  assert.equal(levelThree.candidates.length, 5);
+  assert.equal(levelThree.distortedInteraction, "DESTROY_WITHOUT_RESTORE");
+  assert.ok(
+    levelThree.candidates
+      .filter(({ tileKind }) => tileKind === "DISTORTED")
+      .every(({ destroyChance }) => destroyChance === 10_000),
+  );
+});
+
+test("world tree resonance is a guaranteed radius-two cross", () => {
+  const definition = getBoardDefinition("SHOULDERS", 1);
+  const board = createBoardSetup(definition, 0, new SeededRandom(1)).board;
+  const plan = createElzowinAttackPlan(
+    definition,
+    board,
+    mysteryCard("WORLD_TREE_RESONANCE"),
+    { row: 2, column: 2 },
+  );
+
+  assert.equal(plan.candidates.length, 9);
+  assert.equal(plan.distortedInteraction, "DESTROY_WITHOUT_RESTORE");
+  assert.ok(
+    plan.candidates.every(
+      ({ destroyChance }) => destroyChance === 10_000,
+    ),
+  );
+});
+
+test("outburst destroys one normal target and cannot target distorted", () => {
+  const definition = getBoardDefinition("WEAPON", 1);
+  const board = createBoardSetup(definition, 0, new SeededRandom(1)).board;
+  const spirit = mysteryCard("OUTBURST");
+  const plan = createOutburstAttackPlan(
+    definition,
+    board,
+    spirit,
+    { row: 1, column: 3 },
+  );
+
+  assert.equal(plan.candidates.length, 1);
+  assert.equal(plan.candidates[0]?.destroyChance, 10_000);
+  assert.throws(
+    () =>
+      createOutburstAttackPlan(
+        definition,
+        board,
+        spirit,
+        { row: 1, column: 2 },
+      ),
+    /cannot target a distorted tile/,
+  );
+});
+
+test("non-Elzowin pattern spirits cannot center an attack on distorted", () => {
+  const definition = getBoardDefinition("WEAPON", 1);
+  const board = createBoardSetup(definition, 0, new SeededRandom(1)).board;
+
+  assert.throws(
+    () =>
+      createFixedAttackPlan(
+        definition,
+        board,
+        card("SHOCKWAVE", 2),
+        { row: 1, column: 2 },
+      ),
+    /cannot target a distorted tile/,
   );
 });
 
@@ -303,6 +401,29 @@ function linearCard(
     spiritId,
     category: "NORMAL",
     level,
+  };
+}
+
+function normalCard(
+  spiritId: "PURIFY",
+  level: SpiritLevel,
+): SpiritCard {
+  return {
+    instanceId: `card:${spiritId}:${level}`,
+    spiritId,
+    category: "NORMAL",
+    level,
+  };
+}
+
+function mysteryCard(
+  spiritId: "OUTBURST" | "WORLD_TREE_RESONANCE",
+): SpiritCard {
+  return {
+    instanceId: `card:${spiritId}:1`,
+    spiritId,
+    category: "MYSTERY",
+    level: 1,
   };
 }
 

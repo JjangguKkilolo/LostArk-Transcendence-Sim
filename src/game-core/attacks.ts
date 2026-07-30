@@ -27,6 +27,17 @@ export type LinearPatternSpiritId =
   | "TIDAL_WAVE";
 
 export type PatternSpiritId = FixedPatternSpiritId | LinearPatternSpiritId;
+export type ElzowinAttackSpiritId = "PURIFY" | "WORLD_TREE_RESONANCE";
+export type SingleTargetSpiritId = "OUTBURST";
+export type PlannedAttackSpiritId =
+  | PatternSpiritId
+  | ElzowinAttackSpiritId
+  | SingleTargetSpiritId;
+
+export type DistortedInteraction =
+  | "TRIGGER_RESTORE"
+  | "DESTROY_WITHOUT_RESTORE"
+  | "IGNORE";
 
 export type AttackCandidate = Readonly<{
   tileId: string;
@@ -37,8 +48,9 @@ export type AttackCandidate = Readonly<{
 
 export type AttackPlan = Readonly<{
   spiritInstanceId: string;
-  spiritId: PatternSpiritId;
+  spiritId: PlannedAttackSpiritId;
   spiritLevel: 1 | 2 | 3;
+  distortedInteraction: DistortedInteraction;
   target: Position;
   candidates: readonly AttackCandidate[];
 }>;
@@ -141,11 +153,60 @@ export function createLinearAttackPlan(
   );
 }
 
+export function createElzowinAttackPlan(
+  definition: BoardDefinition,
+  board: BoardState,
+  spirit: SpiritCard,
+  target: Position,
+): AttackPlan {
+  if (
+    spirit.spiritId !== "PURIFY" &&
+    spirit.spiritId !== "WORLD_TREE_RESONANCE"
+  ) {
+    throw new Error(`Spirit ${spirit.spiritId} is not an Elzowin attack spirit.`);
+  }
+  if (spirit.spiritId === "WORLD_TREE_RESONANCE" && spirit.level !== 1) {
+    throw new Error("World Tree's Resonance cannot be enhanced.");
+  }
+
+  return createPatternAttackPlan(
+    definition,
+    board,
+    spirit,
+    spirit.spiritId,
+    target,
+    createElzowinPattern(spirit),
+  );
+}
+
+export function createOutburstAttackPlan(
+  definition: BoardDefinition,
+  board: BoardState,
+  spirit: SpiritCard,
+  target: Position,
+): AttackPlan {
+  if (spirit.spiritId !== "OUTBURST") {
+    throw new Error(`Spirit ${spirit.spiritId} is not Outburst.`);
+  }
+  if (spirit.level !== 1) {
+    throw new Error("Outburst cannot be enhanced.");
+  }
+
+  return createPatternAttackPlan(
+    definition,
+    board,
+    spirit,
+    "OUTBURST",
+    target,
+    [relativeCell(0, 0)],
+  );
+}
+
 function createPatternAttackPlan(
   definition: BoardDefinition,
   board: BoardState,
   spirit: SpiritCard,
-  spiritId: PatternSpiritId,
+  spiritId: PlannedAttackSpiritId,
   target: Position,
   relativePattern: readonly RelativeCell[],
 ): AttackPlan {
@@ -157,6 +218,14 @@ function createPatternAttackPlan(
   const tileByPosition = new Map(
     board.tiles.map((tile) => [positionKey(tile.position), tile]),
   );
+  const targetTile = tileByPosition.get(positionKey(target));
+  if (
+    targetTile?.kind === "DISTORTED" &&
+    spiritId !== "PURIFY" &&
+    spiritId !== "WORLD_TREE_RESONANCE"
+  ) {
+    throw new Error(`Spirit ${spiritId} cannot target a distorted tile.`);
+  }
   const candidates = relativePattern
     .map((cell) => ({
       cell,
@@ -191,6 +260,7 @@ function createPatternAttackPlan(
     spiritInstanceId: spirit.instanceId,
     spiritId,
     spiritLevel: spirit.level,
+    distortedInteraction: distortedInteraction(spiritId, spirit.level),
     target: { ...target },
     candidates,
   };
@@ -277,6 +347,36 @@ function createLinearPattern(
   return cells;
 }
 
+function createElzowinPattern(spirit: SpiritCard): RelativeCell[] {
+  if (spirit.spiritId === "PURIFY") {
+    const cells = [
+      relativeCell(0, -1),
+      relativeCell(0, 0),
+      relativeCell(0, 1),
+    ];
+    if (spirit.level === 3) {
+      cells.push(relativeCell(-1, 0), relativeCell(1, 0));
+    }
+    return cells;
+  }
+
+  if (spirit.spiritId === "WORLD_TREE_RESONANCE") {
+    return [
+      relativeCell(-2, 0),
+      relativeCell(-1, 0),
+      relativeCell(0, -2),
+      relativeCell(0, -1),
+      relativeCell(0, 0),
+      relativeCell(0, 1),
+      relativeCell(0, 2),
+      relativeCell(1, 0),
+      relativeCell(2, 0),
+    ];
+  }
+
+  throw new Error(`Unsupported Elzowin spirit: ${spirit.spiritId}.`);
+}
+
 function squareOffsets(radius: number): RelativeCell[] {
   const cells: RelativeCell[] = [];
   for (let row = -radius; row <= radius; row += 1) {
@@ -298,6 +398,18 @@ function destroyChance(
   distance: number,
 ): number {
   if (
+    spirit.spiritId === "PURIFY"
+  ) {
+    if (isCenter) return PROBABILITY_SCALE;
+    return spirit.level >= 2 ? PROBABILITY_SCALE : 5_000;
+  }
+  if (
+    spirit.spiritId === "OUTBURST" ||
+    spirit.spiritId === "WORLD_TREE_RESONANCE"
+  ) {
+    return PROBABILITY_SCALE;
+  }
+  if (
     spirit.category !== "NORMAL" ||
     (!isFixedPatternSpirit(spirit.spiritId) &&
       !isLinearPatternSpirit(spirit.spiritId))
@@ -315,6 +427,17 @@ function destroyChance(
     return Math.max(PROBABILITY_SCALE - distance * 1_500, 1_000);
   }
   return LEVEL_ONE_NON_CENTER_CHANCE[spirit.spiritId];
+}
+
+function distortedInteraction(
+  spiritId: PlannedAttackSpiritId,
+  level: 1 | 2 | 3,
+): DistortedInteraction {
+  if (spiritId === "PURIFY" || spiritId === "WORLD_TREE_RESONANCE") {
+    return "DESTROY_WITHOUT_RESTORE";
+  }
+  if (level === 3) return "IGNORE";
+  return "TRIGGER_RESTORE";
 }
 
 function validateBoardMatchesDefinition(

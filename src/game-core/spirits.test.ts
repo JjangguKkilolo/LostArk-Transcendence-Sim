@@ -10,6 +10,7 @@ import {
 } from "./spirits.ts";
 import {
   drawNormalSpiritId,
+  MYSTERY_SPIRIT_DEFINITIONS,
   NORMAL_SPIRIT_DEFINITIONS,
   NORMAL_SPIRIT_TOTAL_WEIGHT,
 } from "../game-data/spirits.ts";
@@ -65,6 +66,18 @@ test("normal spirit weights preserve the documented 200-slot pool", () => {
       ["TIDAL_WAVE", 11],
       ["RAINSTORM", 14],
       ["PURIFY", 20],
+    ],
+  );
+});
+
+test("the two mystery spirits are fixed at level one", () => {
+  assert.deepEqual(
+    MYSTERY_SPIRIT_DEFINITIONS.map(
+      ({ id, elementalLord, maxLevel }) => [id, elementalLord, maxLevel],
+    ),
+    [
+      ["OUTBURST", "UNDART", 1],
+      ["WORLD_TREE_RESONANCE", "ELZOWIN", 1],
     ],
   );
 });

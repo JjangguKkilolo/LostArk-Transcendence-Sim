@@ -1,9 +1,27 @@
 import type { RandomSource } from "../game-core/random.ts";
 import type {
   ElementalLord,
+  MysterySpiritDefinition,
   NormalSpiritId,
   SpiritDefinition,
 } from "../game-core/spirits.ts";
+
+export const MYSTERY_SPIRIT_DEFINITIONS: readonly MysterySpiritDefinition[] = [
+  {
+    id: "OUTBURST",
+    name: "분출",
+    category: "MYSTERY",
+    elementalLord: "UNDART",
+    maxLevel: 1,
+  },
+  {
+    id: "WORLD_TREE_RESONANCE",
+    name: "세계수의 공명",
+    category: "MYSTERY",
+    elementalLord: "ELZOWIN",
+    maxLevel: 1,
+  },
+];
 
 export const NORMAL_SPIRIT_DEFINITIONS: readonly SpiritDefinition[] = [
   spirit("HELLFIRE", "업화", "EPHERNIA", 23),

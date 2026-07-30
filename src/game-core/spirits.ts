@@ -33,6 +33,14 @@ export type SpiritDefinition = Readonly<{
   appearanceWeight: number;
 }>;
 
+export type MysterySpiritDefinition = Readonly<{
+  id: MysterySpiritId;
+  name: string;
+  category: "MYSTERY";
+  elementalLord: ElementalLord;
+  maxLevel: 1;
+}>;
+
 export type SpiritCard = Readonly<{
   instanceId: string;
   spiritId: SpiritId;

@@ -20,6 +20,14 @@ export type FixedPatternSpiritId =
   | "TORNADO"
   | "SHOCKWAVE";
 
+export type LinearPatternSpiritId =
+  | "GREAT_EXPLOSION"
+  | "EARTHQUAKE"
+  | "RAINSTORM"
+  | "TIDAL_WAVE";
+
+export type PatternSpiritId = FixedPatternSpiritId | LinearPatternSpiritId;
+
 export type AttackCandidate = Readonly<{
   tileId: string;
   position: Position;
@@ -29,7 +37,7 @@ export type AttackCandidate = Readonly<{
 
 export type AttackPlan = Readonly<{
   spiritInstanceId: string;
-  spiritId: FixedPatternSpiritId;
+  spiritId: PatternSpiritId;
   spiritLevel: 1 | 2 | 3;
   target: Position;
   candidates: readonly AttackCandidate[];
@@ -59,6 +67,13 @@ const FIXED_PATTERN_SPIRITS: ReadonlySet<SpiritId> = new Set([
   "SHOCKWAVE",
 ]);
 
+const LINEAR_PATTERN_SPIRITS: ReadonlySet<SpiritId> = new Set([
+  "GREAT_EXPLOSION",
+  "EARTHQUAKE",
+  "RAINSTORM",
+  "TIDAL_WAVE",
+]);
+
 const LEVEL_ONE_NON_CENTER_CHANCE: Readonly<
   Record<FixedPatternSpiritId, number>
 > = {
@@ -74,20 +89,67 @@ export function isFixedPatternSpirit(
   return FIXED_PATTERN_SPIRITS.has(spiritId);
 }
 
+export function isLinearPatternSpirit(
+  spiritId: SpiritId,
+): spiritId is LinearPatternSpiritId {
+  return LINEAR_PATTERN_SPIRITS.has(spiritId);
+}
+
 export function createFixedAttackPlan(
   definition: BoardDefinition,
   board: BoardState,
   spirit: SpiritCard,
   target: Position,
 ): AttackPlan {
-  validateBoardMatchesDefinition(definition, board);
-
   if (
     spirit.category !== "NORMAL" ||
     !isFixedPatternSpirit(spirit.spiritId)
   ) {
     throw new Error(`Spirit ${spirit.spiritId} is not a fixed-pattern spirit.`);
   }
+
+  return createPatternAttackPlan(
+    definition,
+    board,
+    spirit,
+    spirit.spiritId,
+    target,
+    createRelativePattern(spirit.spiritId),
+  );
+}
+
+export function createLinearAttackPlan(
+  definition: BoardDefinition,
+  board: BoardState,
+  spirit: SpiritCard,
+  target: Position,
+): AttackPlan {
+  if (
+    spirit.category !== "NORMAL" ||
+    !isLinearPatternSpirit(spirit.spiritId)
+  ) {
+    throw new Error(`Spirit ${spirit.spiritId} is not a linear-pattern spirit.`);
+  }
+
+  return createPatternAttackPlan(
+    definition,
+    board,
+    spirit,
+    spirit.spiritId,
+    target,
+    createLinearPattern(spirit.spiritId, definition.size),
+  );
+}
+
+function createPatternAttackPlan(
+  definition: BoardDefinition,
+  board: BoardState,
+  spirit: SpiritCard,
+  spiritId: PatternSpiritId,
+  target: Position,
+  relativePattern: readonly RelativeCell[],
+): AttackPlan {
+  validateBoardMatchesDefinition(definition, board);
   if (!isPositionInShape(target, definition.size, definition.shape)) {
     throw new Error(`Target ${positionKey(target)} is not playable.`);
   }
@@ -95,7 +157,7 @@ export function createFixedAttackPlan(
   const tileByPosition = new Map(
     board.tiles.map((tile) => [positionKey(tile.position), tile]),
   );
-  const candidates = createRelativePattern(spirit.spiritId)
+  const candidates = relativePattern
     .map((cell) => ({
       cell,
       position: {
@@ -114,7 +176,12 @@ export function createFixedAttackPlan(
         tileId: tile.id,
         position,
         tileKind: tile.kind,
-        destroyChance: destroyChance(spirit, cell.isCenter, tile.kind),
+        destroyChance: destroyChance(
+          spirit,
+          cell.isCenter,
+          tile.kind,
+          Math.max(Math.abs(cell.row), Math.abs(cell.column)),
+        ),
       };
     })
     .filter((candidate) => candidate !== undefined)
@@ -122,7 +189,7 @@ export function createFixedAttackPlan(
 
   return {
     spiritInstanceId: spirit.instanceId,
-    spiritId: spirit.spiritId,
+    spiritId,
     spiritLevel: spirit.level,
     target: { ...target },
     candidates,
@@ -181,6 +248,35 @@ function createRelativePattern(
   }
 }
 
+function createLinearPattern(
+  spiritId: LinearPatternSpiritId,
+  boardSize: number,
+): RelativeCell[] {
+  const maximumOffset = boardSize - 1;
+  const cells: RelativeCell[] = [];
+
+  for (let offset = -maximumOffset; offset <= maximumOffset; offset += 1) {
+    switch (spiritId) {
+      case "GREAT_EXPLOSION":
+        cells.push(relativeCell(offset, offset));
+        if (offset !== 0) cells.push(relativeCell(offset, -offset));
+        break;
+      case "EARTHQUAKE":
+        cells.push(relativeCell(0, offset));
+        break;
+      case "RAINSTORM":
+        cells.push(relativeCell(offset, 0));
+        break;
+      case "TIDAL_WAVE":
+        cells.push(relativeCell(0, offset));
+        if (offset !== 0) cells.push(relativeCell(offset, 0));
+        break;
+    }
+  }
+
+  return cells;
+}
+
 function squareOffsets(radius: number): RelativeCell[] {
   const cells: RelativeCell[] = [];
   for (let row = -radius; row <= radius; row += 1) {
@@ -199,9 +295,14 @@ function destroyChance(
   spirit: SpiritCard,
   isCenter: boolean,
   tileKind: TileKind,
+  distance: number,
 ): number {
-  if (spirit.category !== "NORMAL" || !isFixedPatternSpirit(spirit.spiritId)) {
-    throw new Error("Unsupported spirit passed to fixed chance calculation.");
+  if (
+    spirit.category !== "NORMAL" ||
+    (!isFixedPatternSpirit(spirit.spiritId) &&
+      !isLinearPatternSpirit(spirit.spiritId))
+  ) {
+    throw new Error("Unsupported spirit passed to chance calculation.");
   }
 
   if (spirit.level === 3) {
@@ -209,6 +310,9 @@ function destroyChance(
   }
   if (spirit.level === 2 || isCenter) {
     return PROBABILITY_SCALE;
+  }
+  if (isLinearPatternSpirit(spirit.spiritId)) {
+    return Math.max(PROBABILITY_SCALE - distance * 1_500, 1_000);
   }
   return LEVEL_ONE_NON_CENTER_CHANCE[spirit.spiritId];
 }

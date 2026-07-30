@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createFixedAttackPlan, rollAttackPlan } from "./attacks.ts";
+import {
+  createFixedAttackPlan,
+  createLinearAttackPlan,
+  rollAttackPlan,
+} from "./attacks.ts";
 import { createBoardSetup, positionKey } from "./board.ts";
 import type { RandomSource } from "./random.ts";
 import { SeededRandom } from "./random.ts";
-import type { FixedPatternSpiritId } from "./attacks.ts";
+import type {
+  FixedPatternSpiritId,
+  LinearPatternSpiritId,
+} from "./attacks.ts";
 import type { SpiritCard, SpiritLevel } from "./spirits.ts";
 import { getBoardDefinition } from "../game-data/boards.ts";
 
@@ -46,6 +53,13 @@ const INTERIOR_PATTERN_COUNTS: Readonly<Record<FixedPatternSpiritId, number>> = 
   THUNDER_STRIKE: 5,
   TORNADO: 5,
   SHOCKWAVE: 9,
+};
+
+const LINEAR_PATTERN_COUNTS: Readonly<Record<LinearPatternSpiritId, number>> = {
+  GREAT_EXPLOSION: 10,
+  EARTHQUAKE: 6,
+  RAINSTORM: 6,
+  TIDAL_WAVE: 11,
 };
 
 test("fixed spirits produce their full documented interior patterns", () => {
@@ -98,6 +112,71 @@ test("attack patterns are clipped at the playable board edge", () => {
     );
     assert.equal(plan.candidates.length, expectedCount, spiritId);
   }
+});
+
+test("linear spirits cover the documented rows, columns, and diagonals", () => {
+  const definition = getBoardDefinition("SHOULDERS", 1);
+  const board = createBoardSetup(definition, 0, new SeededRandom(1)).board;
+
+  for (const [spiritId, expectedCount] of Object.entries(
+    LINEAR_PATTERN_COUNTS,
+  ) as [LinearPatternSpiritId, number][]) {
+    const plan = createLinearAttackPlan(
+      definition,
+      board,
+      linearCard(spiritId, 1),
+      { row: 2, column: 2 },
+    );
+    assert.equal(plan.candidates.length, expectedCount, spiritId);
+    assert.equal(
+      new Set(plan.candidates.map(({ position }) => positionKey(position))).size,
+      expectedCount,
+      `${spiritId} must not duplicate its center`,
+    );
+  }
+});
+
+test("linear level one chance loses 15 percent per step with a 10 percent floor", () => {
+  const definition = getBoardDefinition("SHOULDERS", 6);
+  const board = createBoardSetup(definition, 0, new SeededRandom(1)).board;
+  const plan = createLinearAttackPlan(
+    definition,
+    board,
+    linearCard("EARTHQUAKE", 1),
+    { row: 0, column: 0 },
+  );
+
+  assert.equal(chanceAt(plan, 0, 0), 10_000);
+  assert.equal(chanceAt(plan, 0, 1), 8_500);
+  assert.equal(chanceAt(plan, 0, 5), 2_500);
+  assert.equal(chanceAt(plan, 0, 6), 1_000);
+  assert.equal(chanceAt(plan, 0, 7), 1_000);
+});
+
+test("linear level two is guaranteed and level three ignores distorted", () => {
+  const definition = getBoardDefinition("WEAPON", 1);
+  const board = createBoardSetup(definition, 0, new SeededRandom(1)).board;
+  const target = { row: 1, column: 2 };
+  const levelTwo = createLinearAttackPlan(
+    definition,
+    board,
+    linearCard("TIDAL_WAVE", 2),
+    target,
+  );
+  const levelThree = createLinearAttackPlan(
+    definition,
+    board,
+    linearCard("TIDAL_WAVE", 3),
+    target,
+  );
+
+  assert.equal(chanceAt(levelTwo, target.row, target.column), 10_000);
+  assert.equal(chanceAt(levelThree, target.row, target.column), 0);
+  assert.ok(
+    levelThree.candidates
+      .filter(({ tileKind }) => tileKind === "ANCIENT")
+      .every(({ destroyChance }) => destroyChance === 10_000),
+  );
 });
 
 test("level one center and non-center chances match each spirit", () => {
@@ -205,6 +284,18 @@ test("non-playable targets and unsupported spirits are rejected", () => {
 
 function card(
   spiritId: FixedPatternSpiritId,
+  level: SpiritLevel,
+): SpiritCard {
+  return {
+    instanceId: `card:${spiritId}:${level}`,
+    spiritId,
+    category: "NORMAL",
+    level,
+  };
+}
+
+function linearCard(
+  spiritId: LinearPatternSpiritId,
   level: SpiritLevel,
 ): SpiritCard {
   return {

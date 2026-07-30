@@ -40,6 +40,15 @@ import {
   NORMAL_SPIRIT_DEFINITIONS,
 } from "../src/game-data/spirits.ts";
 import { rankHeuristicActions } from "../src/recommendation/heuristic.ts";
+import type {
+  ChopagoWorkerRecommendation,
+  ChopagoWorkerRequest,
+  ChopagoWorkerResponse,
+} from "../src/recommendation/worker-protocol.ts";
+
+const MONTE_CARLO_SAMPLE_COUNT = 64;
+const MONTE_CARLO_MAX_TURNS = 24;
+const MONTE_CARLO_TIME_BUDGET_MS = 1_800;
 
 type GameConfig = Readonly<{
   equipmentPart: EquipmentPart;
@@ -87,6 +96,9 @@ export default function Home() {
   const [config, setConfig] = useState<GameConfig>(DEFAULT_CONFIG);
   const [draftConfig, setDraftConfig] = useState<GameConfig>(DEFAULT_CONFIG);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [aiThinking, setAiThinking] = useState(false);
+  const [aiAnalysis, setAiAnalysis] =
+    useState<readonly ChopagoWorkerRecommendation[]>([]);
   const definition = useMemo(
     () => getBoardDefinition(config.equipmentPart, config.stage),
     [config],
@@ -103,6 +115,9 @@ export default function Home() {
   );
   const playerRandom = useRef(new SeededRandom(11_031));
   const aiRandom = useRef(new SeededRandom(91_117));
+  const aiRecommendationRandom = useRef(new SeededRandom(73_331));
+  const aiWorker = useRef<Worker | null>(null);
+  const aiRequestId = useRef(0);
 
   const recommendations = useMemo(
     () =>
@@ -150,6 +165,91 @@ export default function Home() {
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [settingsOpen]);
 
+  useEffect(
+    () => () => {
+      aiWorker.current?.terminate();
+    },
+    [],
+  );
+
+  const requestAiAction = (calculatingBattle: BattleState) => {
+    aiWorker.current?.terminate();
+    const worker = new Worker(
+      new URL("../src/workers/chopago.worker.ts", import.meta.url),
+      { type: "module" },
+    );
+    const requestId = aiRequestId.current + 1;
+    aiRequestId.current = requestId;
+    aiWorker.current = worker;
+    setAiThinking(true);
+    setAiAnalysis([]);
+    setMessage(
+      `초파고가 ${MONTE_CARLO_SAMPLE_COUNT}개의 미래를 계산하고 있습니다.`,
+    );
+
+    const useRecommendation = (
+      action: GameAction,
+      analysis: readonly ChopagoWorkerRecommendation[],
+    ) => {
+      if (requestId !== aiRequestId.current) return;
+      worker.terminate();
+      aiWorker.current = null;
+      setAiThinking(false);
+      setAiAnalysis(analysis);
+      const aiLocked = lockAiAction(definition, calculatingBattle, action);
+      if (!aiLocked.ok) {
+        setMessage(aiLocked.error);
+        return;
+      }
+      const resolving = beginRoundResolution(aiLocked.state);
+      if (!resolving.ok) {
+        setMessage(resolving.error);
+        return;
+      }
+      resolveAndDisplay(resolving.state);
+    };
+
+    const useHeuristicFallback = () => {
+      const fallback = rankHeuristicActions(
+        definition,
+        calculatingBattle.ai,
+      )[0];
+      if (fallback === undefined) {
+        setAiThinking(false);
+        setMessage("초파고가 선택 가능한 행동을 찾지 못했습니다.");
+        return;
+      }
+      setMessage("정밀 계산을 완료하지 못해 빠른 추천으로 진행합니다.");
+      useRecommendation(fallback.action, []);
+    };
+
+    worker.onmessage = (event: MessageEvent<ChopagoWorkerResponse>) => {
+      if (event.data.requestId !== requestId) return;
+      if (event.data.type === "ERROR") {
+        useHeuristicFallback();
+        return;
+      }
+      const best = event.data.recommendations[0];
+      if (best === undefined) {
+        useHeuristicFallback();
+        return;
+      }
+      useRecommendation(best.action, event.data.recommendations);
+    };
+    worker.onerror = useHeuristicFallback;
+
+    const request: ChopagoWorkerRequest = {
+      requestId,
+      definition,
+      state: calculatingBattle.ai,
+      seed: aiRecommendationRandom.current.nextUint32(),
+      sampleCount: MONTE_CARLO_SAMPLE_COUNT,
+      maxRolloutTurns: MONTE_CARLO_MAX_TURNS,
+      timeBudgetMs: MONTE_CARLO_TIME_BUDGET_MS,
+    };
+    worker.postMessage(request);
+  };
+
   const submitAction = (action: GameAction) => {
     if (battle.phase !== "PLAYER_DECIDING") return;
     if (battle.ai.status === "CLEARED") {
@@ -168,17 +268,8 @@ export default function Home() {
     }
     const calculating = beginAiCalculation(playerLocked.state);
     if (!calculating.ok) return;
-    const aiChoice = rankHeuristicActions(definition, calculating.state.ai)[0];
-    if (aiChoice === undefined) return;
-    const aiLocked = lockAiAction(
-      definition,
-      calculating.state,
-      aiChoice.action,
-    );
-    if (!aiLocked.ok) return;
-    const resolving = beginRoundResolution(aiLocked.state);
-    if (!resolving.ok) return;
-    resolveAndDisplay(resolving.state);
+    setBattle(calculating.state);
+    requestAiAction(calculating.state);
   };
 
   const resolveAndDisplay = (resolvingBattle: BattleState) => {
@@ -216,17 +307,8 @@ export default function Home() {
     const advanced = advanceBattleRound(battle);
     if (!advanced.ok) return;
     if (advanced.state.phase === "AI_CALCULATING") {
-      const aiChoice = rankHeuristicActions(definition, advanced.state.ai)[0];
-      if (aiChoice === undefined) return;
-      const aiLocked = lockAiAction(
-        definition,
-        advanced.state,
-        aiChoice.action,
-      );
-      if (!aiLocked.ok) return;
-      const resolving = beginRoundResolution(aiLocked.state);
-      if (!resolving.ok) return;
-      resolveAndDisplay(resolving.state);
+      setBattle(advanced.state);
+      requestAiAction(advanced.state);
       return;
     }
     setBattle(advanced.state);
@@ -238,12 +320,15 @@ export default function Home() {
   };
 
   const reset = () => {
+    cancelAiCalculation();
     playerRandom.current = new SeededRandom(11_031);
     aiRandom.current = new SeededRandom(91_117);
+    aiRecommendationRandom.current = new SeededRandom(73_331);
     setBattle(createInitialBattle(config));
     setSelectedIndex(0);
     setPlayerPhase(undefined);
     setAiPhase(undefined);
+    setAiAnalysis([]);
     setMessage("새 대전을 시작했습니다.");
   };
 
@@ -253,18 +338,28 @@ export default function Home() {
   };
 
   const startConfiguredBattle = () => {
+    cancelAiCalculation();
     const nextBattle = createInitialBattle(draftConfig);
     playerRandom.current = new SeededRandom(11_031);
     aiRandom.current = new SeededRandom(91_117);
+    aiRecommendationRandom.current = new SeededRandom(73_331);
     setConfig(draftConfig);
     setBattle(nextBattle);
     setSelectedIndex(0);
     setPlayerPhase(undefined);
     setAiPhase(undefined);
+    setAiAnalysis([]);
     setSettingsOpen(false);
     setMessage(
       `${PART_NAMES[draftConfig.equipmentPart]} ${draftConfig.stage}단계 · 가호 ${draftConfig.graceLevel}로 시작합니다.`,
     );
+  };
+
+  const cancelAiCalculation = () => {
+    aiRequestId.current += 1;
+    aiWorker.current?.terminate();
+    aiWorker.current = null;
+    setAiThinking(false);
   };
 
   return (
@@ -358,7 +453,13 @@ export default function Home() {
               <p className="eyebrow">CHOPAGO READ</p>
               <h2>지금의 추천</h2>
             </div>
-            <span className="live-badge">LIVE</span>
+            <span className={`live-badge ${aiThinking ? "badge-thinking" : ""}`}>
+              {aiThinking
+                ? "CALCULATING"
+                : aiAnalysis.length > 0
+                  ? "MONTE CARLO"
+                  : "QUICK READ"}
+            </span>
           </div>
           <div className="recommendation-list">
             {recommendations.slice(0, 3).map((recommendation) => (
@@ -372,6 +473,7 @@ export default function Home() {
               </div>
             ))}
           </div>
+          <AiAnalysis analysis={aiAnalysis} thinking={aiThinking} state={battle.ai} />
         </div>
 
         <div className="round-panel">
@@ -561,6 +663,50 @@ function Score({ side, state }: { side: string; state: GameState }) {
       <span>{side}</span>
       <strong>{ancientCount(state)}</strong>
       <small>남은 석판 · 소환 {state.summonCount}</small>
+    </div>
+  );
+}
+
+function AiAnalysis({
+  analysis,
+  thinking,
+  state,
+}: {
+  analysis: readonly ChopagoWorkerRecommendation[];
+  thinking: boolean;
+  state: GameState;
+}) {
+  if (thinking) {
+    return (
+      <div className="ai-analysis ai-analysis-loading" aria-live="polite">
+        <span className="analysis-spinner" />
+        <div>
+          <strong>미래 수 탐색 중</strong>
+          <p>게임 화면과 애니메이션은 계산 중에도 계속 반응합니다.</p>
+        </div>
+      </div>
+    );
+  }
+  if (analysis.length === 0) return null;
+
+  return (
+    <div className="ai-analysis">
+      <div className="analysis-title">
+        <span>초파고가 실제로 검토한 선택</span>
+        <small>{analysis[0]?.metrics.completedSamples ?? 0}회씩 시뮬레이션</small>
+      </div>
+      <div className="analysis-grid">
+        {analysis.map((item) => (
+          <div className="analysis-card" key={actionKey(item.action)}>
+            <span>#{item.rank}</span>
+            <strong>{actionLabel(item.action, state)}</strong>
+            <div>
+              <small>완주 {(item.metrics.clearProbability * 100).toFixed(0)}%</small>
+              <small>평균 잔여 {item.metrics.expectedRemainingAncient.toFixed(1)}</small>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

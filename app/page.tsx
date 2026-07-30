@@ -22,11 +22,13 @@ import {
 } from "../src/animation/timeline.ts";
 import {
   createGame,
+  createSpiritAttackPlan,
   getLegalActions,
   type GameAction,
   type GameEvent,
   type GameState,
 } from "../src/game-core/game.ts";
+import { PROBABILITY_SCALE } from "../src/game-core/attacks.ts";
 import {
   isPositionInShape,
   positionKey,
@@ -620,6 +622,7 @@ type BoardPanelProps = {
 };
 
 function BoardPanel(props: BoardPanelProps) {
+  const [previewTarget, setPreviewTarget] = useState<Position>();
   const tileByPosition = new Map(
     props.state.board.tiles.map((tile) => [positionKey(tile.position), tile]),
   );
@@ -636,6 +639,35 @@ function BoardPanel(props: BoardPanelProps) {
   const animationClass = props.animation
     ? `animation-${props.animation.phase.toLowerCase()} effect-${props.animation.style.toLowerCase()}`
     : "animation-idle effect-neutral";
+  const previewPlan = useMemo(() => {
+    if (!props.interactive || previewTarget === undefined) return undefined;
+    const spirit = props.state.spiritQueue.active[props.selectedIndex];
+    try {
+      return createSpiritAttackPlan(
+        props.definition,
+        props.state.board,
+        spirit,
+        previewTarget,
+      );
+    } catch {
+      return undefined;
+    }
+  }, [
+    props.definition,
+    props.interactive,
+    props.selectedIndex,
+    props.state.board,
+    props.state.spiritQueue.active,
+    previewTarget,
+  ]);
+  const previewChances = new Map(
+    previewPlan?.candidates.map((candidate) => [
+      positionKey(candidate.position),
+      candidate.destroyChance,
+    ]) ?? [],
+  );
+  const previewTargetKey =
+    previewTarget === undefined ? undefined : positionKey(previewTarget);
 
   return (
     <article className={`board-panel board-${props.side.toLowerCase()}`}>
@@ -653,6 +685,7 @@ function BoardPanel(props: BoardPanelProps) {
       <div
         className={`board ${animationClass}`}
         style={{ "--board-size": props.definition.size } as CSSProperties}
+        onMouseLeave={() => setPreviewTarget(undefined)}
       >
         {props.animation !== undefined &&
           (props.animation.phase === "CAST" ||
@@ -672,6 +705,7 @@ function BoardPanel(props: BoardPanelProps) {
           const key = positionKey(position);
           const tile = tileByPosition.get(key);
           const legal = props.legalTargetKeys.has(key);
+          const previewChance = previewChances.get(key);
           return (
             <button
               key={key}
@@ -685,12 +719,25 @@ function BoardPanel(props: BoardPanelProps) {
                 recommendedKey === key ? "tile-recommended" : "",
                 affectedKeys.has(key) ? "tile-effect" : "",
                 failedKeys.has(key) ? "tile-effect-failed" : "",
+                previewChance !== undefined ? "tile-preview" : "",
+                previewTargetKey === key ? "tile-preview-target" : "",
               ]
                 .filter(Boolean)
                 .join(" ")}
               disabled={!props.interactive || !legal}
               onClick={() => props.onTarget(position)}
-              aria-label={tileLabel(tile, position)}
+              onMouseEnter={() => {
+                if (props.interactive && legal) setPreviewTarget(position);
+              }}
+              onFocus={() => {
+                if (props.interactive && legal) setPreviewTarget(position);
+              }}
+              onBlur={() => setPreviewTarget(undefined)}
+              aria-label={`${tileLabel(tile, position)}${
+                previewChance === undefined
+                  ? ""
+                  : ` 파괴 확률 ${formatDestroyChance(previewChance)}`
+              }`}
             >
               {tile?.specialEffect ? (
                 <span className="special-glyph">
@@ -699,10 +746,23 @@ function BoardPanel(props: BoardPanelProps) {
               ) : tile?.kind === "DISTORTED" ? (
                 <span className="distorted-glyph">◆</span>
               ) : null}
+              {previewChance !== undefined && (
+                <span className="probability-label">
+                  {formatDestroyChance(previewChance)}
+                </span>
+              )}
             </button>
           );
         })}
       </div>
+      {props.interactive && (
+        <div className={`probability-guide ${previewPlan ? "guide-active" : ""}`}>
+          <span className="guide-swatch" />
+          {previewPlan
+            ? "현재 위치 기준 석판별 파괴 확률"
+            : "석판에 마우스를 올리면 공격 범위와 파괴 확률을 확인할 수 있습니다."}
+        </div>
+      )}
 
       <div className="spirit-zone">
         <div className="active-cards">
@@ -1288,6 +1348,11 @@ function tileLabel(tile: Tile | undefined, position: Position) {
     return `${coordinate} ${SPECIAL_NAMES[tile.specialEffect]} 특수 석판`;
   }
   return `${coordinate} 고대 석판`;
+}
+
+function formatDestroyChance(chance: number) {
+  const percent = (chance / PROBABILITY_SCALE) * 100;
+  return `${Number.isInteger(percent) ? percent.toFixed(0) : percent.toFixed(1)}%`;
 }
 
 function battleResultMessage(state: BattleState) {

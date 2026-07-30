@@ -141,12 +141,32 @@ export function consumeUsedSpirit(
   activeIndex: ActiveSpiritIndex,
   random: RandomSource,
 ): SpiritQueueTransition {
+  return consumeUsedSpiritWithOther(
+    state,
+    activeIndex,
+    state.active[activeIndex === 0 ? 1 : 0],
+    random,
+  );
+}
+
+export function consumeUsedSpiritWithOther(
+  state: SpiritQueueState,
+  activeIndex: ActiveSpiritIndex,
+  otherSpirit: SpiritCard,
+  random: RandomSource,
+): SpiritQueueTransition {
   validateSpiritQueue(state);
   const used = state.active[activeIndex];
+  const otherIndex: ActiveSpiritIndex = activeIndex === 0 ? 1 : 0;
+  if (otherSpirit.instanceId !== state.active[otherIndex].instanceId) {
+    throw new Error("Special effect must preserve the other card instance.");
+  }
+  const active: [SpiritCard, SpiritCard] = [...state.active];
+  active[otherIndex] = otherSpirit;
   const events: SpiritFlowEvent[] = [
     { type: "SPIRIT_USED", activeIndex, card: used },
   ];
-  const advanced = replaceFromPreview(state, activeIndex, random);
+  const advanced = replaceFromPreview({ ...state, active }, activeIndex, random);
   const stabilized = stabilizeMerges(advanced.state, random);
 
   return {

@@ -18,6 +18,13 @@ export type BoardShape =
   | "SQUARE"
   | "ROUNDED_DIAMOND";
 export type TileKind = "ANCIENT" | "DISTORTED";
+export type SpecialTileId =
+  | "SPIRIT_REROLL"
+  | "SPIRIT_SHUFFLE"
+  | "SPIRIT_SAVE_CHANCE"
+  | "SPIRIT_UPGRADE"
+  | "SPIRIT_COPY"
+  | "SPIRIT_MYSTIC";
 export type ClearGrade = 0 | 1 | 2 | 3;
 
 export type Position = Readonly<{
@@ -42,6 +49,7 @@ export type Tile = Readonly<{
   id: string;
   position: Position;
   kind: TileKind;
+  specialEffect?: SpecialTileId;
 }>;
 
 export type BoardState = Readonly<{

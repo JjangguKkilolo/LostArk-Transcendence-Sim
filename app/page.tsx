@@ -441,9 +441,10 @@ export default function Home() {
 
   return (
     <main className="app-shell">
+      <div className="ambient-fog" aria-hidden="true" />
       <header className="topbar">
         <div>
-          <p className="eyebrow">고대 유적 · 장비 초월</p>
+          <p className="eyebrow">ANCIENT RUINS</p>
           <h1>
             초월 <span>대전</span>
           </h1>
@@ -473,9 +474,49 @@ export default function Home() {
 
       <section className="status-strip" aria-live="polite">
         <span className={`phase-dot phase-${battle.phase.toLowerCase()}`} />
-        <strong>{phaseLabel(battle.phase)}</strong>
+        <strong>
+          초월 {config.stage}단계 진행 중 · {phaseLabel(battle.phase)}
+        </strong>
         <p>{message}</p>
       </section>
+
+      <aside className="relic-rail" aria-label="장비 초월 단계">
+        <button className="rail-info-button" onClick={openSettings}>
+          초월 정보
+        </button>
+        <div className="relic-medallions">
+          {EQUIPMENT_PARTS.map((part) => (
+            <button
+              key={part}
+              className={`relic-medallion ${config.equipmentPart === part ? "relic-active" : ""}`}
+              data-part={part.toLowerCase()}
+              onClick={() => {
+                setDraftConfig({ ...config, equipmentPart: part });
+                setSettingsOpen(true);
+              }}
+              aria-label={`${PART_NAMES[part]} 초월 설정`}
+            >
+              <span>{PART_NAMES[part].slice(0, 1)}</span>
+            </button>
+          ))}
+        </div>
+        <button className="selected-relic" onClick={openSettings}>
+          <span>초월 {config.stage}단계</span>
+          <strong>{PART_NAMES[config.equipmentPart]} · 가호 {config.graceLevel}</strong>
+        </button>
+      </aside>
+
+      <aside className="stele-inspector" aria-label="현재 석판 정보">
+        <span className="inspector-caption">석판 정보</span>
+        <div className="inspector-glyph" aria-hidden="true">
+          ✦
+        </div>
+        <strong>고대 석판</strong>
+        <p>
+          정령의 힘이 닿는 석판과 파괴 확률을 마우스를 올려 확인할 수
+          있습니다.
+        </p>
+      </aside>
 
       <section className="duel-grid">
         <BoardPanel
@@ -503,8 +544,8 @@ export default function Home() {
         />
 
         <div className="versus-mark" aria-hidden="true">
-          <span>V</span>
-          <span>S</span>
+          <span>DUEL</span>
+          <b>VS</b>
         </div>
 
         <BoardPanel
@@ -785,7 +826,10 @@ function BoardPanel(props: BoardPanelProps) {
         <div className="preview-cards">
           <span>NEXT</span>
           {props.state.spiritQueue.preview.map((card) => (
-            <div className="preview-card" key={card.instanceId}>
+            <div
+              className={`preview-card spirit-${card.spiritId.toLowerCase().replaceAll("_", "-")}`}
+              key={card.instanceId}
+            >
               <small>Lv.{card.level}</small>
               <strong>{SPIRIT_NAMES.get(card.spiritId)}</strong>
             </div>
@@ -812,11 +856,16 @@ function SpiritCardView({
   rerolls: number;
 }) {
   return (
-    <div className={`spirit-card ${selected ? "spirit-selected" : ""}`}>
+    <div
+      className={`spirit-card spirit-${card.spiritId.toLowerCase().replaceAll("_", "-")} ${selected ? "spirit-selected" : ""}`}
+    >
       <button onClick={onClick} disabled={disabled}>
-        <span>Lv.{card.level}</span>
-        <strong>{SPIRIT_NAMES.get(card.spiritId)}</strong>
-        <small>{card.category === "MYSTERY" ? "유적의 신비" : "정령 소환"}</small>
+        <span className="spirit-card-level">Lv.{card.level}</span>
+        <span className="spirit-art" aria-hidden="true" />
+        <span className="spirit-copy">
+          <strong>{SPIRIT_NAMES.get(card.spiritId)}</strong>
+          <small>{card.category === "MYSTERY" ? "유적의 신비" : "정령 소환"}</small>
+        </span>
       </button>
       <button
         className="reroll-button"
